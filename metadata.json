@@ -1,0 +1,8 @@
+{
+  "name": "ERP Distribuidora Premium - Tela de Login",
+  "description": "Sistema integrado de alta performance para controle de faturamento, estoque, CRM e BI executivo para distribuidoras.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
