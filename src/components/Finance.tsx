@@ -78,8 +78,9 @@ export default function Finance({
   const [party, setParty] = useState('');
   const [amountInput, setAmountInput] = useState('');
   const [type, setType] = useState<'receita' | 'despesa'>('despesa');
-  const [cat, setCat] = useState<FinancialRecord['category']>('Fornecedores');
+  const [cat, setCat] = useState<FinancialRecord['category']>('Outros');
   const [dueDateInput, setDueDateInput] = useState('');
+  const [payMethod, setPayMethod] = useState('PIX');
 
   // Universal Filter Helper (Reference: '2026-06-03' is today)
   const isDateInPeriod = (
@@ -172,13 +173,13 @@ export default function Finance({
   else if (selectedPeriod === 'Todos') baselineMultiplier = 8;
   else baselineMultiplier = 1;
 
-  const baseBruta = Math.round(116200 * baselineMultiplier);
-  const baseTaxes = Math.round(18350 * baselineMultiplier);
-  const baseCOGS = Math.round(41800 * baselineMultiplier);
-  const baseCommissions = Math.round(2905 * baselineMultiplier);
-  const baseConsignados = Math.round(51000 * baselineMultiplier);
-  const baseCaixa = Math.round(14900 * baselineMultiplier);
-  const baseBanco = Math.round(131800 * baselineMultiplier);
+  const baseBruta = 0;
+  const baseTaxes = 0;
+  const baseCOGS = 0;
+  const baseCommissions = 0;
+  const baseConsignados = 0;
+  const baseCaixa = 0;
+  const baseBanco = 0;
 
   // 9 REQUISITE DIGITAL CARDS FORMULAS
   // Card 1: Receita Bruta (Gross Revenue)
@@ -203,7 +204,7 @@ export default function Finance({
 
   // Card 4: Lucro Líquido (Net Profit)
   // Bottom-line operational profit minus commissions, infra, other structural outlays
-  const lucroLiquido = Math.max(9150, lucroOperacional - (otherExpenses * 0.9) - comissoes * 0.6);
+  const lucroLiquido = lucroOperacional - (otherExpenses * 0.9) - comissoes * 0.6;
 
   // Card 7: Consignados (Consignments)
   // Capital allocated in cold shelf placements or consigned systems in sales networks
@@ -225,10 +226,10 @@ export default function Finance({
   const activeClientNames = Array.from(new Set(filteredOrders.map(o => o.clientName)));
   const clientesAtendidosCount = filteredOrders.length > 0 
     ? activeClientNames.length 
-    : (selectedPeriod === 'maio' ? 4 : selectedPeriod === 'junho' ? 5 : 6);
+    : 0;
 
-  const totalPedidosCount = filteredOrders.length || (selectedPeriod === 'maio' ? 14 : selectedPeriod === 'junho' ? 21 : 35);
-  const faturamentoValor = totalFaturamento || (selectedPeriod === 'maio' ? 42520 : selectedPeriod === 'junho' ? 56140 : 98660);
+  const totalPedidosCount = filteredOrders.length;
+  const faturamentoValor = totalFaturamento;
   const lucroBrutoVendas = filteredOrders.reduce((sum, o) => {
     const cost = o.items.reduce((s, it) => {
       const p = products.find(prod => prod.id === it.productId);
@@ -236,11 +237,39 @@ export default function Finance({
     }, 0);
     return sum + (o.total - cost - o.taxes.total);
   }, 0);
-  const lucroValor = lucroBrutoVendas || (selectedPeriod === 'maio' ? 18300 : selectedPeriod === 'junho' ? 24500 : 42800);
+  const lucroValor = lucroBrutoVendas;
   const ticketMedio = totalPedidosCount > 0 ? faturamentoValor / totalPedidosCount : 0;
 
   // CHART TIMESPAN GENERATION FOR THE DYNAMIC BAR CHART (ENTRADAS X SAÍDAS)
   const getChartData = () => {
+    const isSystemClean = orders.length === 0 && financialRecords.length === 0;
+    if (isSystemClean) {
+      if (selectedPeriod === 'maio') {
+        return [
+          { label: 'Semana 1', entradas: 0, saidas: 0 },
+          { label: 'Semana 2', entradas: 0, saidas: 0 },
+          { label: 'Semana 3', entradas: 0, saidas: 0 },
+          { label: 'Semana 4', entradas: 0, saidas: 0 },
+        ];
+      } else if (selectedPeriod === 'junho') {
+        return [
+          { label: 'Semana 1', entradas: 0, saidas: 0 },
+          { label: 'Semana 2', entradas: 0, saidas: 0 },
+          { label: 'Semana 3', entradas: 0, saidas: 0 },
+          { label: 'Semana 4', entradas: 0, saidas: 0 },
+        ];
+      } else {
+        return [
+          { label: 'Jan', entradas: 0, saidas: 0 },
+          { label: 'Fev', entradas: 0, saidas: 0 },
+          { label: 'Mar', entradas: 0, saidas: 0 },
+          { label: 'Abr', entradas: 0, saidas: 0 },
+          { label: 'Mai', entradas: 0, saidas: 0 },
+          { label: 'Jun', entradas: 0, saidas: 0 },
+        ];
+      }
+    }
+
     if (selectedPeriod === 'maio') {
       return [
         { label: 'Semana 1', entradas: 19500, saidas: 12400 },
@@ -361,7 +390,8 @@ export default function Finance({
       dueDate: dueDateInput,
       status: 'Pendente',
       partyName: party,
-      category: cat
+      category: cat,
+      paymentMethod: payMethod
     };
 
     onAddTransaction(newRecord);
@@ -370,6 +400,7 @@ export default function Finance({
     setParty('');
     setAmountInput('');
     setDueDateInput('');
+    setPayMethod('PIX');
   };
 
   // KPI card configuration object mapping the 9 metrics requested
@@ -977,9 +1008,14 @@ export default function Finance({
 
                       {/* Categoria */}
                       <td className="p-4 text-left">
-                        <span className="font-bold text-slate-500 bg-slate-100/80 px-2 py-0.5 rounded text-[10px]">
-                          {record.category}
-                        </span>
+                        <div className="flex flex-col gap-1.5 items-start font-semibold">
+                          <span className="font-bold text-slate-500 bg-slate-100/80 px-2 py-0.5 rounded text-[10px]">
+                            {record.category}
+                          </span>
+                          <span className="font-bold text-slate-600 bg-slate-50 px-2 py-0.5 rounded text-[9px] border border-slate-100 uppercase tracking-tight">
+                            💳 {record.paymentMethod || 'PIX'}
+                          </span>
+                        </div>
                       </td>
 
                       {/* Due date */}
@@ -1185,21 +1221,38 @@ export default function Finance({
                     isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-750'
                   }`}
                 >
-                  {type === 'despesa' ? (
-                    <>
-                      <option value="Compra de Mercadoria">Compra de Mercadoria (Café Cru/Insumos)</option>
-                      <option value="Frete">Frete / Movimentação</option>
-                      <option value="Impostos">Impostos Federais / DAS / ICMS</option>
-                      <option value="Salários">Salários / Remuneração</option>
-                      <option value="Comissões">Comissões de Vendedores</option>
-                      <option value="Outros">Outras Despesas Diversas</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="Vendas">Faturamento de Vendas Mercantis</option>
-                      <option value="Outros">Outras Receitas Operacionais</option>
-                    </>
-                  )}
+                  <option value="Compra de Mercadoria">Compra de Mercadoria</option>
+                  <option value="Frete">Frete</option>
+                  <option value="Impostos">Impostos</option>
+                  <option value="Salários">Salários</option>
+                  <option value="Comissões">Comissões</option>
+                  <option value="Marketing">Marketing</option>
+                  <option value="Energia">Energia</option>
+                  <option value="Água">Água</option>
+                  <option value="Internet">Internet</option>
+                  <option value="Aluguel">Aluguel</option>
+                  <option value="Equipamentos">Equipamentos</option>
+                  <option value="Serviços">Serviços</option>
+                  <option value="Outros">Outros</option>
+                </select>
+              </div>
+
+              {/* Forma de Pagamento */}
+              <div>
+                <label className="block text-slate-450 uppercase tracking-wider mb-1.5 font-bold">Forma de Pagamento</label>
+                <select
+                  value={payMethod}
+                  onChange={(e) => setPayMethod(e.target.value)}
+                  className={`w-full border rounded-xl p-3 font-bold focus:outline-none focus:border-[#1E94CF] ${
+                    isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-750'
+                  }`}
+                >
+                  <option value="PIX">PIX</option>
+                  <option value="Boleto">Boleto Bancário</option>
+                  <option value="Crédito">Cartão de Crédito</option>
+                  <option value="Débito">Cartão de Débito</option>
+                  <option value="Dinheiro">Dinheiro em Espécie</option>
+                  <option value="TED">Transferência Bancária (TED/DOC)</option>
                 </select>
               </div>
 

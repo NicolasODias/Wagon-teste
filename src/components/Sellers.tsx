@@ -28,7 +28,7 @@ import {
   ShieldCheck,
   AlertCircle
 } from 'lucide-react';
-import { Client, Order, FinancialRecord, Seller } from '../types';
+import { Client, Order, FinancialRecord, Seller, Commission } from '../types';
 
 interface SellersProps {
   sellers: Seller[];
@@ -37,6 +37,8 @@ interface SellersProps {
   orders: Order[];
   financialRecords: FinancialRecord[];
   onAddTransaction: (record: FinancialRecord) => void;
+  commissions?: Commission[];
+  onPayCommission?: (sellerId: string, amount: number) => void;
 }
 
 export default function Sellers({
@@ -45,7 +47,9 @@ export default function Sellers({
   clients,
   orders,
   financialRecords,
-  onAddTransaction
+  onAddTransaction,
+  commissions = [],
+  onPayCommission
 }: SellersProps) {
   // Navigation & interaction states
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
@@ -61,9 +65,23 @@ export default function Sellers({
   const [newCommissionRate, setNewCommissionRate] = useState(5.0);
   const [newTarget, setNewTarget] = useState(100000);
 
+  // Advanced Period Filters (Data Inicial, Data Final)
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
+
   // Commission payout slider / state
   const [payoutAmount, setPayoutAmount] = useState<number | ''>('');
   const [payoutSuccessMessage, setPayoutSuccessMessage] = useState<string | null>(null);
+
+  // Seller target editing states
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const [tempTarget, setTempTarget] = useState<string>('');
+
+  // Seller name and commission editing states
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [tempName, setTempName] = useState<string>('');
+  const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
+  const [tempCommission, setTempCommission] = useState<string>('');
 
   // Core metrics calculation helpers connected to other modules of the ERP
   const getSellerStats = (seller: Seller) => {
@@ -72,29 +90,49 @@ export default function Sellers({
     const activeClients = sellerClients.filter(c => (c.status || 'Ativo') === 'Ativo');
     const inactiveClients = sellerClients.filter(c => (c.status || 'Ativo') === 'Inativo');
 
-    // 2. Sum of total sales of those clients
-    const totalSold = sellerClients.reduce((sum, c) => sum + c.totalSpent, 0);
+    // Filter orders for the selected seller (either by salesRep match or matching client)
+    let sellerOrders = orders.filter(o => {
+      const repMatch = (o.salesRep || '').trim().toLowerCase() === seller.name.trim().toLowerCase();
+      const clientMatch = sellerClients.some(c => c.id === o.clientId);
+      return (repMatch || clientMatch) && o.status !== 'Cancelado';
+    });
 
-    // 3. Calculated total commissions generated
-    const totalCommissionsGenerated = totalSold * (seller.commissionRate / 100);
+    if (filterStartDate) {
+      sellerOrders = sellerOrders.filter(o => o.date >= filterStartDate);
+    }
+    if (filterEndDate) {
+      sellerOrders = sellerOrders.filter(o => o.date <= filterEndDate);
+    }
 
-    // Seed initial historical paid commissions to look premium
-    let initialPaid = 0;
-    if (seller.id === 'REP-001') initialPaid = 18000;
-    if (seller.id === 'REP-002') initialPaid = 1200;
-    if (seller.id === 'REP-003') initialPaid = 5500;
+    // Dynamic metrics inside selected period
+    const totalSold = sellerOrders.reduce((sum, o) => sum + o.total, 0);
+    const quantityOfSales = sellerOrders.length;
 
-    // 4. Paid commissions from financial records
-    const ledgerPaid = financialRecords
-      .filter(f => f.type === 'despesa' && f.category === 'Folha Pgto' && f.partyName.trim().toLowerCase() === seller.name.trim().toLowerCase() && f.status === 'Pago')
-      .reduce((sum, f) => sum + f.amount, 0);
+    // Unique clients served in this period
+    const uniqueServedClients = new Set(sellerOrders.map(o => o.clientId));
+    const clientsAtendidos = uniqueServedClients.size;
 
-    const commissionPaid = initialPaid + ledgerPaid;
+    // Filter commissions by period using matched order date
+    let sellerCommissions = commissions.filter(c => c.vendedor_id === seller.id);
+    if (filterStartDate || filterEndDate) {
+      sellerCommissions = sellerCommissions.filter(c => {
+        const o = orders.find(ord => ord.id === c.pedido_id);
+        const dateToCheck = o ? o.date : (c.created_at || '');
+        if (filterStartDate && dateToCheck < filterStartDate) return false;
+        if (filterEndDate && dateToCheck > filterEndDate) return false;
+        return true;
+      });
+    }
 
-    // 5. Pending commissions
-    const commissionPending = Math.max(0, totalCommissionsGenerated - commissionPaid);
+    const totalCommissionsGenerated = sellerCommissions.reduce((sum, c) => sum + c.valor, 0);
+    const commissionPaid = sellerCommissions
+      .filter(c => c.status === 'PAGO')
+      .reduce((sum, c) => sum + c.valor, 0);
+    const commissionPending = sellerCommissions
+      .filter(c => c.status === 'PENDENTE' || c.status === 'PARCIAL')
+      .reduce((sum, c) => sum + c.valor, 0);
 
-    // 6. Target achieved percentage
+    // 4. Target achieved percentage
     const targetPercentage = seller.target > 0 ? (totalSold / seller.target) * 100 : 0;
 
     return {
@@ -103,6 +141,8 @@ export default function Sellers({
       inactiveClientCount: inactiveClients.length,
       clientsList: sellerClients,
       totalSold,
+      quantityOfSales,
+      clientsAtendidos,
       commissionPaid,
       commissionPending,
       targetPercentage,
@@ -187,6 +227,10 @@ export default function Sellers({
     };
 
     onAddTransaction(comissionExpense);
+
+    if (onPayCommission) {
+      onPayCommission(seller.id, payValue);
+    }
     
     setPayoutSuccessMessage(`Sucesso! Pagamento de R$ ${payValue.toLocaleString('pt-BR')} processado e registrado na Folha de Pagamento do D.F.`);
     setPayoutAmount('');
@@ -324,6 +368,48 @@ export default function Sellers({
               <option value="Ativo">Apenas Ativos</option>
               <option value="Inativo">Inativos</option>
             </select>
+          </div>
+        </div>
+
+        {/* Advanced Period Filter */}
+        <div className="bg-slate-50 border border-slate-200/50 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-semibold">
+          <div className="flex items-center space-x-2 text-slate-700">
+            <span className="text-base text-sky-500">📅</span>
+            <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider">Período de Análise</span>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center space-x-2">
+              <span className="text-slate-450 text-[10px] font-extrabold uppercase">Data Inicial:</span>
+              <input
+                type="date"
+                value={filterStartDate}
+                onChange={(e) => setFilterStartDate(e.target.value)}
+                className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold focus:ring-1 focus:ring-brand-light focus:outline-none"
+              />
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <span className="text-slate-450 text-[10px] font-extrabold uppercase">Data Final:</span>
+              <input
+                type="date"
+                value={filterEndDate}
+                onChange={(e) => setFilterEndDate(e.target.value)}
+                className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold focus:ring-1 focus:ring-brand-light focus:outline-none"
+              />
+            </div>
+
+            {(filterStartDate || filterEndDate) && (
+              <button
+                onClick={() => {
+                  setFilterStartDate('');
+                  setFilterEndDate('');
+                }}
+                className="text-[10px] uppercase bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg font-black tracking-wider transition-all cursor-pointer"
+              >
+                Limpar
+              </button>
+            )}
           </div>
         </div>
 
@@ -539,11 +625,11 @@ export default function Sellers({
                   exit={{ x: "100%" }}
                   transition={{ type: 'spring', damping: 25, stiffness: 200 }}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-full max-w-2xl bg-[#FCFDFE] h-full shadow-2xl flex flex-col justify-between overflow-hidden relative text-slate-800"
+                  className="w-full sm:max-w-2xl bg-[#FCFDFE] h-[92vh] sm:h-full mt-auto sm:mt-0 rounded-t-3xl sm:rounded-none shadow-2xl flex flex-col justify-between overflow-hidden relative text-slate-800"
                 >
                   
                   {/* Drawer Header Block */}
-                  <div className="p-6 bg-gradient-to-r from-slate-900 to-indigo-950 text-white shrink-0 relative">
+                  <div className="pt-8 pb-5 px-6 bg-gradient-to-r from-slate-900 to-indigo-950 text-white shrink-0 relative">
                     <div className="absolute top-0 right-0 w-64 h-64 bg-[#1E94CF]/10 rounded-full blur-3xl pointer-events-none"></div>
                     
                     <div className="flex justify-between items-start relative z-10">
@@ -551,7 +637,49 @@ export default function Sellers({
                         <span className="inline-block bg-[#1e94cf]/25 text-[#1e94cf] border border-[#1e94cf]/20 px-2.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider">
                           CRM Representante Comercial
                         </span>
-                        <h3 className="text-lg font-black tracking-tight">{s.name}</h3>
+                        {editingNameId === s.id ? (
+                          <div className="flex items-center space-x-1.5 mt-1">
+                            <input
+                              type="text"
+                              value={tempName}
+                              onChange={(e) => setTempName(e.target.value)}
+                              className="bg-slate-800 text-white border border-slate-700 rounded px-2 py-0.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-[#1E94CF] max-w-[180px]"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => {
+                                if (tempName.trim()) {
+                                  const updated = sellers.map(item => item.id === s.id ? { ...item, name: tempName.trim() } : item);
+                                  onUpdateSellers(updated);
+                                  setEditingNameId(null);
+                                }
+                              }}
+                              className="bg-brand-green hover:bg-emerald-600 text-white rounded px-2 py-0.5 text-[9px] font-black transition-all cursor-pointer"
+                            >
+                              Salvar
+                            </button>
+                            <button
+                              onClick={() => setEditingNameId(null)}
+                              className="bg-slate-700 hover:bg-slate-600 text-slate-300 rounded px-2 py-0.5 text-[9px] font-black transition-all cursor-pointer"
+                            >
+                              X
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-2">
+                            <h3 className="text-lg font-black tracking-tight">{s.name}</h3>
+                            <button
+                              onClick={() => {
+                                setEditingNameId(s.id);
+                                setTempName(s.name);
+                              }}
+                              className="text-[9px] text-[#1E94CF] hover:underline font-bold transition-all cursor-pointer"
+                              title="Alterar Nome"
+                            >
+                              (Alterar)
+                            </button>
+                          </div>
+                        )}
                         <p className="text-xs text-slate-400 font-mono">
                           Cadastro ID: {s.id} • {s.email}
                         </p>
@@ -583,16 +711,61 @@ export default function Sellers({
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block font-semibold text-[10px] uppercase">Comissão Base</span>
-                        <strong className="text-base font-black text-brand-green mt-1 block">
-                          {s.commissionRate}%
-                        </strong>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 block font-semibold text-[10px] uppercase">Comissão Base</span>
+                          {editingCommissionId !== s.id && (
+                            <button
+                              onClick={() => {
+                                setEditingCommissionId(s.id);
+                                setTempCommission(s.commissionRate.toString());
+                              }}
+                              className="text-[9px] text-[#1E94CF] hover:underline font-bold transition-all cursor-pointer ml-1"
+                            >
+                              Alterar
+                            </button>
+                          )}
+                        </div>
+                        {editingCommissionId === s.id ? (
+                          <div className="mt-1 flex items-center space-x-1">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={tempCommission}
+                              onChange={(e) => setTempCommission(e.target.value)}
+                              className="w-12 bg-slate-800 text-white border border-slate-700 rounded px-1 py-0.5 text-xs font-black focus:outline-none"
+                              placeholder="%"
+                            />
+                            <button
+                              onClick={() => {
+                                const parsed = parseFloat(tempCommission);
+                                if (!isNaN(parsed) && parsed >= 0) {
+                                  const updated = sellers.map(item => item.id === s.id ? { ...item, commissionRate: parsed } : item);
+                                  onUpdateSellers(updated);
+                                }
+                                setEditingCommissionId(null);
+                              }}
+                              className="bg-brand-green hover:bg-emerald-600 text-white rounded px-1.5 py-0.5 text-[9px] font-bold"
+                            >
+                              OK
+                            </button>
+                            <button
+                              onClick={() => setEditingCommissionId(null)}
+                              className="bg-slate-700 text-slate-350 rounded px-1.5 py-0.5 text-[9px] font-bold"
+                            >
+                              X
+                            </button>
+                          </div>
+                        ) : (
+                          <strong className="text-base font-black text-brand-green mt-1 block">
+                            {s.commissionRate}%
+                          </strong>
+                        )}
                       </div>
                     </div>
                   </div>
 
                   {/* Scrollable interior details */}
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6 text-xs">
+                  <div className="flex-1 overflow-y-auto p-6 pb-12 space-y-6 text-xs">
                     
                     {/* Resumo financeiro bento grids */}
                     <div className="space-y-3">
@@ -601,12 +774,59 @@ export default function Sellers({
                         <span>Resumo Financeiro & Metas de Desempenho</span>
                       </h4>
                       
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
                           <div>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Meta Estipulada</span>
-                            <strong className="text-sm font-black text-slate-800 block mt-1">R$ {s.target.toLocaleString('pt-BR')}</strong>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Meta Estipulada</span>
+                              <button
+                                onClick={() => {
+                                  setEditingTargetId(s.id);
+                                  setTempTarget(s.target.toString());
+                                }}
+                                className="text-[10px] text-[#1E94CF] hover:underline font-bold cursor-pointer"
+                              >
+                                Alterar Meta
+                              </button>
+                            </div>
+                            
+                            {editingTargetId === s.id ? (
+                              <div className="mt-2 flex items-center space-x-1.5">
+                                <span className="text-slate-500 font-bold text-[11px]">R$</span>
+                                <input
+                                  type="number"
+                                  value={tempTarget}
+                                  onChange={(e) => setTempTarget(e.target.value)}
+                                  className="w-full max-w-[100px] bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs font-black text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#1E94CF]"
+                                  placeholder="Meta"
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => {
+                                    const parsed = parseFloat(tempTarget);
+                                    if (!isNaN(parsed) && parsed >= 0) {
+                                      const updated = sellers.map(item => item.id === s.id ? { ...item, target: parsed } : item);
+                                      onUpdateSellers(updated);
+                                    }
+                                    setEditingTargetId(null);
+                                  }}
+                                  className="bg-brand-green hover:bg-emerald-605 text-white rounded px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer"
+                                >
+                                  OK
+                                </button>
+                                <button
+                                  onClick={() => setEditingTargetId(null)}
+                                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 rounded px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer"
+                                >
+                                  X
+                                </button>
+                              </div>
+                            ) : (
+                              <strong className="text-sm font-black text-slate-800 block mt-1">
+                                R$ {s.target.toLocaleString('pt-BR')}
+                              </strong>
+                            )}
                           </div>
                           
                           <div className="pt-2 mt-2 border-t border-slate-200/50">
@@ -634,6 +854,22 @@ export default function Sellers({
                           </p>
                         </div>
 
+                      </div>
+
+                      {/* Period Stats Grid */}
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Vendas no Período</span>
+                          <strong className="text-xs font-black text-slate-850 block mt-1">{stats.quantityOfSales} ordens</strong>
+                        </div>
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Clientes Adendidos</span>
+                          <strong className="text-xs font-black text-slate-850 block mt-1">{stats.clientsAtendidos} clientes</strong>
+                        </div>
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Clientes Ativos</span>
+                          <strong className="text-xs font-black text-slate-850 block mt-1">{stats.activeClientCount} carteira</strong>
+                        </div>
                       </div>
                     </div>
 
@@ -702,6 +938,52 @@ export default function Sellers({
                           )}
                         </div>
                       )}
+
+                      {/* Sub-table showing individual commissions */}
+                      <div className="pt-3 border-t border-slate-100/80 space-y-2">
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Histórico de Parcelas de Comissão</span>
+                        <div className="overflow-x-auto max-h-48 overflow-y-auto pr-1">
+                          <table className="w-full text-left text-[11px]">
+                            <thead>
+                              <tr className="text-slate-400 font-bold border-b border-slate-100 uppercase text-[9px] tracking-wider">
+                                <th className="py-1">ID</th>
+                                <th className="py-1">Pedido</th>
+                                <th className="py-1">Valor</th>
+                                <th className="py-1">Pagamento</th>
+                                <th className="py-1 text-right">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {commissions
+                                .filter(c => c.vendedor_id === s.id)
+                                .map(c => (
+                                  <tr key={c.id} className="text-slate-650 hover:bg-slate-50/50">
+                                    <td className="py-1.5 font-mono font-bold text-slate-500">{c.id}</td>
+                                    <td className="py-1.5 font-bold text-slate-700">{c.pedido_id}</td>
+                                    <td className="py-1.5 font-black text-indigo-650">R$ {c.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                    <td className="py-1.5 text-slate-500 font-medium">{c.data_pagamento || '-'}</td>
+                                    <td className="py-1.5 text-right">
+                                      <span className={`inline-block px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase ${
+                                        c.status === 'PAGO' 
+                                          ? 'bg-emerald-50 text-brand-green border border-emerald-100'
+                                          : c.status === 'PARCIAL' 
+                                          ? 'bg-sky-50 text-[#1E94CF] border border-sky-100'
+                                          : 'bg-amber-50 text-amber-600 border border-amber-100'
+                                      }`}>
+                                        {c.status}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              {commissions.filter(c => c.vendedor_id === s.id).length === 0 && (
+                                <tr>
+                                  <td colSpan={5} className="py-3 text-center text-slate-400 font-bold italic">Nenhum lançamento registrado</td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
 
                     </div>
 
@@ -793,9 +1075,9 @@ export default function Sellers({
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-100 text-slate-800 text-xs font-semibold"
+              className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-100 text-slate-800 text-xs font-semibold max-h-[90vh] flex flex-col"
             >
-              <div className="p-5 bg-slate-900 text-white flex justify-between items-center">
+              <div className="p-5 bg-slate-900 text-white flex justify-between items-center shrink-0">
                 <div>
                   <h3 className="text-sm font-black tracking-tight">Admitir Novo Vendedor</h3>
                   <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">Admissão de Força Comercial no ERP</p>
@@ -808,7 +1090,7 @@ export default function Sellers({
                 </button>
               </div>
 
-              <form onSubmit={handleAddSeller} className="p-5 space-y-4">
+              <form onSubmit={handleAddSeller} className="p-5 space-y-4 overflow-y-auto flex-1">
                 
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold text-slate-405 block">Nome Completo</label>
@@ -834,7 +1116,7 @@ export default function Sellers({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-slate-405 block">Celular / Contato</label>
                     <input
@@ -859,7 +1141,7 @@ export default function Sellers({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-slate-405 block">Taxa de Comissão (%)</label>
                     <input
@@ -888,7 +1170,7 @@ export default function Sellers({
                   </div>
                 </div>
 
-                <div className="pt-2 flex justify-end space-x-2">
+                <div className="pt-2 flex justify-end space-x-2 shrink-0">
                   <button
                     type="button"
                     onClick={() => setShowAddModal(false)}

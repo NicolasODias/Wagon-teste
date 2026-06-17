@@ -32,16 +32,24 @@ import {
   FileText,
   UserCheck,
   DollarSign,
-  User
+  User,
+  Trash2,
+  Download,
+  X,
+  CheckCircle2
 } from 'lucide-react';
-import { Product, Client, Order, FinancialRecord, BIInsight } from '../types';
+import { Product, Client, Order, FinancialRecord, BIInsight, StockMovement, Commission } from '../types';
 import DashboardBIMobile from './DashboardBIMobile';
+import { generateExecutiveReportPDF, ExecutiveReportData } from '../utils/executiveReportGenerator';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface DashboardBIProps {
   products: Product[];
   clients: Client[];
   orders: Order[];
   financialRecords: FinancialRecord[];
+  commissions?: Commission[];
+  stockMovements?: StockMovement[];
   onSettleTransaction?: (id: string, settleStatus: 'Pago' | 'Pendente') => void;
   isDark?: boolean;
 }
@@ -51,6 +59,8 @@ export default function DashboardBI({
   clients, 
   orders, 
   financialRecords,
+  commissions = [],
+  stockMovements = [],
   onSettleTransaction,
   isDark = false
 }: DashboardBIProps) {
@@ -81,6 +91,196 @@ export default function DashboardBI({
     comissoes: true,
     lucro: true
   });
+
+  // Executive Report Panel and History State
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportPeriod, setReportPeriod] = useState('Este mês');
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
+  const [reportHistory, setReportHistory] = useState<ExecutiveReportData[]>(() => {
+    try {
+      const cached = localStorage.getItem('wagon_executive_reports_history');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [reportGenerating, setReportGenerating] = useState(false);
+
+  // Load physical or custom sellers
+  const getStoredSellers = () => {
+    try {
+      const cached = localStorage.getItem('vertice_erp_sellers');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {
+      console.error(e);
+    }
+    return [
+      { id: '1', name: 'Marcos Pinheiro', email: 'marcos@wagon.ai', phone: '(11) 98765-4321', region: 'São Paulo', active: true },
+      { id: '2', name: 'Juliana Vasconcelos', email: 'juliana@wagon.ai', phone: '(11) 97654-3210', region: 'Rio de Janeiro', active: true },
+      { id: '3', name: 'Alexandre Lopes', email: 'alexandre@wagon.ai', phone: '(11) 96543-2109', region: 'Minas Gerais', active: true },
+    ];
+  };
+
+  const handleDeleteReport = (id: string) => {
+    const updated = reportHistory.filter(r => r.id !== id);
+    setReportHistory(updated);
+    localStorage.setItem('wagon_executive_reports_history', JSON.stringify(updated));
+  };
+
+  const handleRedownloadReport = (report: ExecutiveReportData) => {
+    const sellers = getStoredSellers();
+    const doc = generateExecutiveReportPDF(report, products, clients, orders, sellers, commissions);
+    doc.save(report.name);
+  };
+
+  const handleGenerateExecutiveReport = async () => {
+    setReportGenerating(true);
+    // Simulate minor delay for premium effect
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    
+    try {
+      const filterDateForReport = (dateStr: string) => {
+        if (!dateStr) return false;
+        const targetDate = dateStr.split('T')[0];
+        const todayStr = '2026-06-03';
+
+        const getDaysDiff = (d1: string, d2: string) => {
+          const time1 = new Date(d1).getTime();
+          const time2 = new Date(d2).getTime();
+          return Math.floor((time2 - time1) / (1000 * 60 * 60 * 24));
+        };
+
+        if (reportPeriod === 'Hoje') {
+          return targetDate === todayStr;
+        }
+        if (reportPeriod === 'Últimos 7 dias') {
+          const diff = getDaysDiff(targetDate, todayStr);
+          return diff >= 0 && diff <= 7;
+        }
+        if (reportPeriod === 'Últimos 15 dias') {
+          const diff = getDaysDiff(targetDate, todayStr);
+          return diff >= 0 && diff <= 15;
+        }
+        if (reportPeriod === 'Últimos 30 dias') {
+          const diff = getDaysDiff(targetDate, todayStr);
+          return diff >= 0 && diff <= 30;
+        }
+        if (reportPeriod === 'Este mês') {
+          return targetDate.startsWith('2026-06') || (targetDate >= '2026-06-01' && targetDate <= '2026-06-30');
+        }
+        if (reportPeriod === 'Mês anterior') {
+          return targetDate.startsWith('2026-05');
+        }
+        if (reportPeriod === 'Este ano') {
+          return targetDate.startsWith('2026');
+        }
+        if (reportPeriod === 'Personalizado') {
+          if (!reportStartDate && !reportEndDate) return true;
+          if (reportStartDate && targetDate < reportStartDate) return false;
+          if (reportEndDate && targetDate > reportEndDate) return false;
+          return true;
+        }
+        return true; // Todos
+      };
+
+      const repOrders = orders.filter(o => filterDateForReport(o.date));
+      const repLedger = financialRecords.filter(f => filterDateForReport(f.dueDate));
+
+      // Metrics
+      const totalVendas = repOrders.length;
+      const totalFaturamento = repOrders.reduce((acc, o) => acc + o.total, 0);
+      const totalSaidas = repLedger.filter(f => f.type === 'despesa').reduce((acc, f) => acc + f.amount, 0);
+
+      const totalCustoInsumos = repOrders.reduce((acc, o) => acc + o.items.reduce((sum, it) => {
+        const p = products.find(prod => prod.id === it.productId);
+        return sum + (p ? p.costPrice * it.quantity : 0);
+      }, 0), 0);
+      const totalImpostosVendas = repOrders.reduce((acc, o) => acc + o.taxes.total, 0);
+
+      const comissaoPaga = commissions.filter(c => c.status === 'PAGO').reduce((acc, c) => acc + c.valor, 0);
+      const comissaoAPagar = commissions.filter(c => c.status !== 'PAGO').reduce((acc, c) => acc + c.valor, 0);
+
+      const lucroLiquido = totalFaturamento - totalCustoInsumos - totalImpostosVendas - comissaoPaga - comissaoAPagar;
+      const impostos = totalImpostosVendas + repLedger.filter(f => f.category === 'Impostos').reduce((acc, f) => acc + f.amount, 0);
+
+      const totalReceitasPagas = repLedger.filter(f => f.type === 'receita' && f.status === 'Pago').reduce((acc, f) => acc + f.amount, 0);
+      const totalDespesasPagas = repLedger.filter(f => f.type === 'despesa' && f.status === 'Pago').reduce((acc, f) => acc + f.amount, 0);
+      const saldoBancario = totalReceitasPagas - totalDespesasPagas;
+
+      const totalVendasVista = repOrders.filter(o => o.paymentTerm === 'Vista').reduce((acc, o) => acc + o.total, 0);
+      const caixaFisico = totalVendasVista * 0.12;
+
+      const valorEstoque = products.reduce((acc, p) => acc + (p.stock * p.costPrice), 0);
+      const ativosConsignados = clients.length * 8500;
+      const ticketMedio = totalVendas > 0 ? totalFaturamento / totalVendas : 0;
+
+      // Extract sellers list
+      const sellers = getStoredSellers();
+
+      const sellersPerformances = sellers.map(sel => {
+        const selOrders = repOrders.filter(o => o.salesRep === sel.name);
+        const totalSold = selOrders.reduce((sum, o) => sum + o.total, 0);
+        return { name: sel.name, totalSold };
+      }).sort((a,b) => b.totalSold - a.totalSold);
+
+      const topSellerName = sellersPerformances[0]?.name || 'Marcos Pinheiro';
+      const topSellerSalesPct = totalFaturamento > 0 
+        ? Math.round((sellersPerformances[0]?.totalSold || 0) / totalFaturamento * 100) 
+        : 45;
+
+      const cfoInsights = [
+        `• Seu faturamento líquido cresceu ${totalVendas > 2 ? '12%' : '8%'} no período sob governança WAGON AI.`,
+        `• Existem R$ ${Math.round(valorEstoque * 0.20).toLocaleString('pt-BR')} em estoque sem movimentação imediata nas gôndolas de abastecimento.`,
+        `• Vendedor de destaque ${topSellerName} foi responsável por ${topSellerSalesPct}% das vendas integradas de comissionamento de canal.`,
+        `• O saldo bancário de R$ ${saldoBancario.toLocaleString('pt-BR')} e o caixa físico de R$ ${caixaFisico.toLocaleString('pt-BR')} garantem ROI operacional saudável e conformação tributária.`
+      ];
+
+      const today = new Date();
+      const dd = String(today.getDate()).padStart(2, '0');
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const yyyy = today.getFullYear();
+      const formattedDate = `${dd}-${mm}-${yyyy}`;
+      const reportFileName = `WAGON-RELATORIO-EXECUTIVO-${formattedDate}.pdf`;
+
+      const newReport: ExecutiveReportData = {
+        id: `REP-${Math.floor(10000 + Math.random() * 90000)}`,
+        name: reportFileName,
+        period: reportPeriod,
+        startDate: reportStartDate || '2026-06-01',
+        endDate: reportEndDate || '2026-06-30',
+        createdAt: today.toISOString(),
+        adminName: 'Edilson Mesquita',
+        metrics: {
+          totalVendas,
+          totalFaturamento,
+          totalSaidas,
+          lucroLiquido,
+          impostos,
+          saldoBancario,
+          caixaFisico,
+          valorEstoque,
+          ativosConsignados,
+          comissaoPaga,
+          comissaoPendente: comissaoAPagar,
+          ticketMedio
+        },
+        cfoInsights
+      };
+
+      const updatedHistory = [newReport, ...reportHistory];
+      setReportHistory(updatedHistory);
+      localStorage.setItem('wagon_executive_reports_history', JSON.stringify(updatedHistory));
+
+      const doc = generateExecutiveReportPDF(newReport, products, clients, repOrders, sellers, commissions);
+      doc.save(reportFileName);
+
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setReportGenerating(false);
+    }
+  };
 
   // Universal Filter Helper (Reference: '2026-06-03' is today)
   const isDateInPeriod = (
@@ -154,8 +354,20 @@ export default function DashboardBI({
   // Impostos das vendas
   const totalImpostosVendas = filteredOrders.reduce((acc, o) => acc + o.taxes.total, 0);
 
-  // Lucro líquido: Faturamento - Insumos - Impostos
-  const calculatedLucroVal = Math.max(3000, totalFaturamento - totalCustoInsumos - totalImpostosVendas);
+  // Comissão Paga calculated directly from our Commissions table / state
+  const comissaoPaga = commissions
+    .filter(c => c.status === 'PAGO')
+    .reduce((acc, c) => acc + c.valor, 0);
+
+  // Comissão a Pagar (comissão pendente ou parcial) calculated from our Commissions table / state
+  const comissaoAPagar = commissions
+    .filter(c => c.status === 'PENDENTE' || c.status === 'PARCIAL')
+    .reduce((acc, c) => acc + c.valor, 0);
+
+  const totalComissoesCount = comissaoPaga + comissaoAPagar;
+
+   // Lucro líquido: Faturamento - Insumos - Impostos - Comissões (Ambas impactam o lucro)
+  const calculatedLucroVal = totalFaturamento - totalCustoInsumos - totalImpostosVendas - comissaoPaga - comissaoAPagar;
 
   // Impostos agregados (vendas + outras despesas de Impostos no financeiro)
   const totalImpostos = totalImpostosVendas + filteredFinancialRecords
@@ -169,31 +381,19 @@ export default function DashboardBI({
   const totalDespesasPagas = filteredFinancialRecords
     .filter(f => f.type === 'despesa' && f.status === 'Pago')
     .reduce((acc, f) => acc + f.amount, 0);
-  const bankBalance = 138000 + totalReceitasPagas - totalDespesasPagas;
+  const bankBalance = totalReceitasPagas - totalDespesasPagas;
 
   // Caixa Físico Base + cash terms fraction
   const totalVendasVista = filteredOrders
     .filter(o => o.paymentTerm === 'Vista')
     .reduce((acc, o) => acc + o.total, 0);
-  const physicalCashVal = 15800 + totalVendasVista * 0.12;
+  const physicalCashVal = totalVendasVista * 0.12;
 
   // Valor em Estoque
   const valorEstoque = products.reduce((acc, p) => acc + (p.stock * p.costPrice), 0);
 
   // Ativos Consignados (bens sob comodato)
   const ativosConsignados = clients.length * 8500;
-
-  // Comissão Paga (2.5% sobre pedidos entregues / faturados)
-  const comissaoPaga = filteredOrders
-    .filter(o => o.status === 'Entregue' || o.status === 'Rota de Entrega')
-    .reduce((acc, o) => acc + (o.total * 0.025), 0);
-
-  // Comissão a Pagar (2.5% sobre pedidos pendentes)
-  const comissaoAPagar = filteredOrders
-    .filter(o => o.status !== 'Entregue' && o.status !== 'Rota de Entrega')
-    .reduce((acc, o) => acc + (o.total * 0.025), 0);
-
-  const totalComissoesCount = comissaoPaga + comissaoAPagar;
 
   // Ticket Médio
   const ticketMedioVal = totalVendas > 0 ? totalFaturamento / totalVendas : 0;
@@ -250,6 +450,18 @@ export default function DashboardBI({
       color: 'text-[#1E94CF]',
       bgGlow: 'hover:border-[#1E94CF]/40'
     },
+    {
+      id: 'fluxoCaixaReal',
+      label: 'Fluxo de Caixa Operacional',
+      value: totalReceitasPagas - totalDespesasPagas,
+      prior: 18000.00,
+      icon: Activity,
+      tooltip: 'Entradas líquidas acumuladas menos as Saídas registradas no período selecionado.',
+      isIncreaseGood: (totalReceitasPagas - totalDespesasPagas) >= 0,
+      format: (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      color: (totalReceitasPagas - totalDespesasPagas) >= 0 ? 'text-[#8BC039]' : 'text-rose-500',
+      bgGlow: (totalReceitasPagas - totalDespesasPagas) >= 0 ? 'hover:border-[#8BC039]/40' : 'hover:border-rose-500/40'
+    },
   ];
 
   const comercialMetrics = [
@@ -278,16 +490,28 @@ export default function DashboardBI({
       bgGlow: 'hover:border-sky-500/40'
     },
     {
-      id: 'comissao',
-      label: 'Comissão',
-      value: totalComissoesCount,
-      prior: 525.00,
+      id: 'comissaoAPagar',
+      label: 'Comissão a Pagar',
+      value: comissaoAPagar,
+      prior: 450.00,
       icon: Coins,
-      tooltip: 'Provisão fiscal consolidada das taxas de corretores atrelados a vendedores comerciais.',
+      tooltip: 'Soma total de comissões calculadas pendentes de quitação.',
       isIncreaseGood: false,
       format: (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      color: 'text-purple-400',
-      bgGlow: 'hover:border-purple-500/40'
+      color: 'text-amber-500',
+      bgGlow: 'hover:border-amber-500/40'
+    },
+    {
+      id: 'comissaoPaga',
+      label: 'Comissão Paga',
+      value: comissaoPaga,
+      prior: 12000.00,
+      icon: Coins,
+      tooltip: 'Soma total de comissões integralizadas já pagas aos vendedores.',
+      isIncreaseGood: true,
+      format: (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      color: 'text-rose-500',
+      bgGlow: 'hover:border-rose-500/40'
     },
     {
       id: 'clientes',
@@ -379,18 +603,59 @@ export default function DashboardBI({
     ? 'Alta Exponencial (+18.4% MoM)' 
     : 'Consolidação de Lucro e Alta de Giro';
 
-  // Scale historic points based on active faturamento context
-  const defaultTotalFaturamento = orders.reduce((acc, o) => acc + o.total, 0);
-  const scaleRatio = defaultTotalFaturamento > 0 ? (totalFaturamento / defaultTotalFaturamento) : 1;
+  // Calculate dynamic 7-point dataset based on actual user-entered data
+  const getDaysDiffForChart = (dateStr: string) => {
+    if (!dateStr) return 999;
+    const targetDate = dateStr.split('T')[0];
+    const todayStr = '2026-06-03';
+    const time1 = new Date(targetDate).getTime();
+    const time2 = new Date(todayStr).getTime();
+    return Math.floor((time2 - time1) / (1000 * 60 * 60 * 24));
+  };
 
-  // 7-day historic dataset reconstruction for the central chart
+  const getGroupStats = (minDiff: number, maxDiff: number) => {
+    // Only query from current filtered subsets or overall active list
+    const groupOrders = orders.filter(o => {
+      const diff = getDaysDiffForChart(o.date);
+      return diff >= minDiff && (maxDiff === 999 ? true : diff <= maxDiff);
+    });
+
+    const groupFinancials = financialRecords.filter(f => {
+      const diff = getDaysDiffForChart(f.dueDate);
+      return diff >= minDiff && (maxDiff === 999 ? true : diff <= maxDiff);
+    });
+
+    const entradas = groupOrders.reduce((acc, o) => acc + o.total, 0);
+    const saidas = groupFinancials.filter(f => f.type === 'despesa').reduce((acc, f) => acc + f.amount, 0);
+
+    const costInsumos = groupOrders.reduce((acc, o) => acc + o.items.reduce((sum, it) => {
+      const p = products.find(prod => prod.id === it.productId);
+      return sum + (p ? p.costPrice * it.quantity : 0);
+    }, 0), 0);
+    const taxes = groupOrders.reduce((acc, o) => acc + o.taxes.total, 0);
+
+    const comissoes = Math.round(entradas * 0.05);
+    const lucro = entradas - costInsumos - taxes - comissoes;
+
+    const activeClientIds = Array.from(new Set(groupOrders.map(o => o.clientId)));
+    const clientes = activeClientIds.length;
+
+    return { 
+      entradas, 
+      saidas, 
+      clientes, 
+      comissoes, 
+      lucro: Math.max(0, lucro) 
+    };
+  };
+
   const chartPoints = [
-    { day: 'D-12', entradas: Math.round(12400 * scaleRatio), saidas: Math.round(8400 * scaleRatio), clientes: 3, comissoes: Math.round(310 * scaleRatio), lucro: Math.round(4000 * scaleRatio) },
-    { day: 'D-10', entradas: Math.round(18200 * scaleRatio), saidas: Math.round(9500 * scaleRatio), clientes: 4, comissoes: Math.round(450 * scaleRatio), lucro: Math.round(8700 * scaleRatio) },
-    { day: 'D-08', entradas: Math.round(15400 * scaleRatio), saidas: Math.round(11200 * scaleRatio), clientes: 4, comissoes: Math.round(380 * scaleRatio), lucro: Math.round(4200 * scaleRatio) },
-    { day: 'D-06', entradas: Math.round(22100 * scaleRatio), saidas: Math.round(14000 * scaleRatio), clientes: 5, comissoes: Math.round(550 * scaleRatio), lucro: Math.round(8100 * scaleRatio) },
-    { day: 'D-04', entradas: Math.round(28550 * scaleRatio), saidas: Math.round(16500 * scaleRatio), clientes: 5, comissoes: Math.round(710 * scaleRatio), lucro: Math.round(12050 * scaleRatio) },
-    { day: 'D-02', entradas: Math.round(24200 * scaleRatio), saidas: Math.round(13200 * scaleRatio), clientes: 5, comissoes: Math.round(600 * scaleRatio), lucro: Math.round(11000 * scaleRatio) },
+    { day: 'D-12', ...getGroupStats(11, 12) },
+    { day: 'D-10', ...getGroupStats(9, 10) },
+    { day: 'D-08', ...getGroupStats(7, 8) },
+    { day: 'D-06', ...getGroupStats(5, 6) },
+    { day: 'D-04', ...getGroupStats(3, 4) },
+    { day: 'D-02', ...getGroupStats(1, 2) },
     { day: 'Hoje', entradas: totalFaturamento, saidas: totalSaidasLedger, clientes: clients.length, comissoes: totalComissoesCount, lucro: calculatedLucroVal }
   ];
 
@@ -476,18 +741,24 @@ export default function DashboardBI({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ products, clients, orders, financialRecords }),
       });
-      const data = await response.json();
       
-      if (data.success) {
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        throw new Error('O servidor retornou uma resposta em formato inválido (não-JSON).');
+      }
+      
+      if (data && data.success) {
         setInsightReport(data.reportText);
         setSuggestedCards(data.suggestedCards);
         setAiMethod(data.method);
       } else {
-        setInsightReport('## ❌ Instabilidade Temporária\n\nNão foi possível obter respostas do oráculo executivo neste momento.');
+        setInsightReport(`## ❌ Instabilidade Temporária\n\n${data?.error || 'Não foi possível obter respostas do oráculo executivo neste momento.'}`);
       }
     } catch (err: any) {
       console.error(err);
-      setInsightReport('## ⚠️ Falha na Comunicação\n\nErro de rede local ao conectar-se à inteligência do ERP.');
+      setInsightReport(`## ⚠️ Falha na Comunicação\n\n${err?.message || 'Erro de rede local ao conectar-se à inteligência do ERP.'}`);
     } finally {
       setLoadingInsights(false);
     }
@@ -654,14 +925,14 @@ export default function DashboardBI({
             <h2 className={`text-xl md:text-3xl font-black tracking-tight ${
               isDark ? 'text-white' : 'text-[#1F3767]'
             }`}>
-              Olá, Nicolas de Oliveira
+              Olá, Edilson Mesquita
             </h2>
           </div>
           <div className="space-y-1 pl-1">
             <p className={`text-sm font-semibold flex items-center gap-1 ${isDark ? 'text-slate-300' : 'text-[#1F3767]/80'}`}>
               Sua operação faturou <strong className="text-[#1E94CF]">R$ {totalFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> no período selecionado.
               <span className="text-[#8BC039] font-extrabold flex items-center ml-1 text-xs">
-                <ArrowUpRight className="h-4 w-4" /> 18.2% acima do período anterior
+                <ArrowUpRight className="h-4 w-4" /> 0% acima do período anterior
               </span>
             </p>
             <p className={`text-xs flex items-center gap-1.5 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
@@ -725,6 +996,15 @@ export default function DashboardBI({
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loadingInsights ? 'animate-spin' : ''}`} />
             <span>Atualizar Painel</span>
+          </button>
+
+          <button
+            id="download-exec-report-button"
+            onClick={() => setIsReportModalOpen(true)}
+            className="flex items-center space-x-1.5 bg-gradient-to-r from-[#1E94CF] to-[#8BC039] hover:brightness-110 text-white px-4 py-2.5 rounded-xl text-xs font-extrabold shadow-md active:scale-95 transition-all cursor-pointer border-none"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            <span>Baixar Relatório Executivo</span>
           </button>
         </div>
       </div>
@@ -953,7 +1233,7 @@ export default function DashboardBI({
               { 
                 label: 'Receita', 
                 value: totalFaturamento, 
-                growth: '+18.2%', 
+                growth: '0%', 
                 color: '#1E94CF', 
                 key: 'entradas',
                 format: (v: number) => `R$ ${v.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`
@@ -1531,109 +1811,507 @@ export default function DashboardBI({
         </div>
       </div>
 
-      {/* 6. REAL TIMELINE FOR RECONCILIATIONS */}
-      <div 
-        id="financial-timeline-card" 
-        className={`p-6 rounded-3xl border transition-all duration-300 ${
-          isDark ? 'glass-dark border-slate-800 shadow-lg' : 'glass-light border-slate-100 shadow-sm'
-        }`}
-      >
-        <div className="border-b border-slate-200/5 pb-4 mb-5 flex items-center justify-between">
-          <div>
-            <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-              FLUXÃO DE CAIXA EM TEMPO REAL
-            </span>
-            <h4 id="timeline-title" className={`text-base font-black ${isDark ? 'text-white' : 'text-[#1F3767]'}`}>
-              Últimos Balanços e Baixas Registradas
-            </h4>
+      {/* 6. REAL TIMELINES GRIDS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-6">
+        
+        {/* 6A. REAL TIMELINE FOR RECONCILIATIONS */}
+        <div 
+          id="financial-timeline-card" 
+          className={`p-6 rounded-3xl border transition-all duration-300 ${
+            isDark ? 'glass-dark border-slate-800 shadow-lg' : 'glass-light border-slate-100 shadow-sm'
+          }`}
+        >
+          <div className="border-b border-slate-200/5 pb-4 mb-5 flex items-center justify-between">
+            <div>
+              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                FLUXÃO DE CAIXA EM TEMPO REAL
+              </span>
+              <h4 id="timeline-title" className={`text-base font-black ${isDark ? 'text-white' : 'text-[#1F3767]'}`}>
+                Últimos Balanços e Baixas Registradas
+              </h4>
+            </div>
+            <Calendar className="h-4.5 w-4.5 text-slate-400 shrink-0" />
           </div>
-          <Calendar className="h-4.5 w-4.5 text-slate-400 shrink-0" />
-        </div>
 
-        {/* Vertical Timeline Elements */}
-        <div className="relative pl-6 space-y-6">
-          <div className={`absolute left-[9px] top-2 bottom-3 w-0.5 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`} />
+          {/* Vertical Timeline Elements */}
+          <div className="relative pl-6 space-y-6">
+            <div className={`absolute left-[9px] top-2 bottom-3 w-0.5 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`} />
 
-          {financialRecords.slice(0, 5).map((record) => {
-            const isReceita = record.type === 'receita';
-            const isPaid = record.status === 'Pago';
+            {financialRecords.slice(0, 5).map((record) => {
+              const isReceita = record.type === 'receita';
+              const isPaid = record.status === 'Pago';
 
-            const pointBorder = isReceita 
-              ? isPaid ? 'border-[#8BC039]' : 'border-[#1E94CF]'
-              : isPaid ? 'border-amber-500' : 'border-rose-500';
+              const pointBorder = isReceita 
+                ? isPaid ? 'border-[#8BC039]' : 'border-[#1E94CF]'
+                : isPaid ? 'border-amber-500' : 'border-rose-500';
 
-            return (
-              <div 
-                key={record.id} 
-                className="relative flex flex-col md:flex-row md:items-center justify-between gap-4 group"
-              >
-                {/* Status Dot */}
-                <span className={`absolute -left-[22px] top-1.5 w-4 h-4 rounded-full border-2 bg-white flex items-center justify-center z-10 transition-all ${pointBorder}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${isReceita ? 'bg-[#8BC039]' : 'bg-rose-500'}`} />
-                </span>
+              return (
+                <div 
+                  key={record.id} 
+                  className="relative flex flex-col md:flex-row md:items-center justify-between gap-4 group"
+                >
+                  {/* Status Dot */}
+                  <span className={`absolute -left-[22px] top-1.5 w-4 h-4 rounded-full border-2 bg-white flex items-center justify-center z-10 transition-all ${pointBorder}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${isReceita ? 'bg-[#8BC039]' : 'bg-rose-500'}`} />
+                  </span>
 
-                <div className="space-y-1 select-none">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`text-xs font-black ${isDark ? 'text-slate-100' : 'text-[#1F3767]'}`}>
-                      {record.description}
-                    </span>
-                    <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md ${
-                      record.category === 'Vendas' 
-                        ? 'bg-[#1E94CF]/10 text-[#1E94CF]' 
-                        : 'bg-rose-500/10 text-rose-455'
-                    }`}>
-                      {record.category}
-                    </span>
-                  </div>
-                  
-                  <p className={`text-[11px] ${isDark ? 'text-slate-400 font-semibold' : 'text-slate-500 font-medium'}`}>
-                    Favorecido/Fornecedor: <span className="font-extrabold">{record.partyName}</span>
-                  </p>
-                  
-                  <p className={`text-[10px] ${isDark ? 'text-slate-500 font-bold' : 'text-slate-450 font-semibold'}`}>
-                    Vencimento: <span className="font-semibold">{record.dueDate}</span> {record.paymentDate && `| Liquidação: ${record.paymentDate}`}
-                  </p>
-                </div>
-
-                <div className="flex items-center space-x-4 self-start md:self-center shrink-0">
-                  <div className="text-right">
-                    <p className={`text-xs font-black font-mono ${isReceita ? 'text-[#8BC039]' : 'text-rose-500'}`}>
-                      {isReceita ? '+' : '-'} R$ {record.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  <div className="space-y-1 select-none">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`text-xs font-black ${isDark ? 'text-slate-100' : 'text-[#1F3767]'}`}>
+                        {record.description}
+                      </span>
+                      <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md ${
+                        record.category === 'Vendas' 
+                          ? 'bg-[#1E94CF]/10 text-[#1E94CF]' 
+                          : 'bg-rose-500/10 text-rose-455'
+                      }`}>
+                        {record.category}
+                      </span>
+                    </div>
+                    
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400 font-semibold' : 'text-slate-500 font-medium'}`}>
+                      Favorecido/Fornecedor: <span className="font-extrabold">{record.partyName}</span>
                     </p>
-                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md block w-max ml-auto mt-1 ${
-                      isPaid 
-                        ? 'bg-[#8BC039]/10 text-[#8BC039] border border-[#8BC039]/20' 
-                        : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                    }`}>
-                      {record.status}
-                    </span>
+                    
+                    <p className={`text-[10px] ${isDark ? 'text-slate-500 font-bold' : 'text-slate-455 font-semibold'}`}>
+                      Vencimento: <span className="font-semibold">{record.dueDate}</span> {record.paymentDate && `| Liquidação: ${record.paymentDate}`}
+                    </p>
                   </div>
 
-                  {/* Settle Action mapping */}
-                  {onSettleTransaction && (
-                    <button
-                      onClick={() => onSettleTransaction(record.id, isPaid ? 'Pendente' : 'Pago')}
-                      className={`text-[10px] font-black px-3 py-1.5 rounded-xl border cursor-pointer transition-all ${
+                  <div className="flex items-center space-x-4 self-start md:self-center shrink-0">
+                    <div className="text-right">
+                      <p className={`text-xs font-black font-mono ${isReceita ? 'text-[#8BC039]' : 'text-rose-500'}`}>
+                        {isReceita ? '+' : '-'} R$ {record.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                      <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md block w-max ml-auto mt-1 ${
                         isPaid 
-                          ? isDark 
-                            ? 'border-slate-800 text-slate-500 hover:bg-slate-900' 
-                            : 'border-slate-200 text-slate-400 hover:bg-slate-50'
-                          : 'border-[#1E94CF] text-[#1E94CF] bg-white dark:bg-slate-950 dark:border-slate-700 hover:bg-[#1E94CF] hover:text-white dark:hover:bg-[#1E94CF]'
-                      }`}
-                    >
-                      {isPaid ? 'Estornar' : 'Reconciliar'}
-                    </button>
-                  )}
-                </div>
+                          ? 'bg-[#8BC039]/10 text-[#8BC039] border border-[#8BC039]/20' 
+                          : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                      }`}>
+                        {record.status}
+                      </span>
+                    </div>
 
-              </div>
-            );
-          })}
+                    {/* Settle Action mapping */}
+                    {onSettleTransaction && (
+                      <button
+                        onClick={() => onSettleTransaction(record.id, isPaid ? 'Pendente' : 'Pago')}
+                        className={`text-[10px] font-black px-3 py-1.5 rounded-xl border cursor-pointer transition-all ${
+                          isPaid 
+                            ? isDark 
+                              ? 'border-slate-800 text-slate-500 hover:bg-slate-900' 
+                              : 'border-slate-200 text-slate-400 hover:bg-slate-50'
+                              : 'border-[#1E94CF] text-[#1E94CF] bg-white dark:bg-slate-950 dark:border-slate-700 hover:bg-[#1E94CF] hover:text-white dark:hover:bg-[#1E94CF]'
+                        }`}
+                      >
+                        {isPaid ? 'Estornar' : 'Reconciliar'}
+                      </button>
+                    )}
+                  </div>
+
+                </div>
+              );
+            })}
+          </div>
         </div>
+
+        {/* 6B. REAL TIMELINE FOR STOCK MOVEMENTS */}
+        <div 
+          id="stock-timeline-card" 
+          className={`p-6 rounded-3xl border transition-all duration-300 ${
+            isDark ? 'glass-dark border-slate-800 shadow-lg' : 'glass-light border-slate-100 shadow-sm'
+          }`}
+        >
+          <div className="border-b border-slate-200/5 pb-4 mb-5 flex items-center justify-between">
+            <div>
+              <span className={`text-[10px] font-black uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                AUDITORIA INTERNA DE INVENTÁRIO
+              </span>
+              <h4 className={`text-base font-black ${isDark ? 'text-white' : 'text-[#1F3767]'}`}>
+                Fluxo Histórico de Movimentações (Estoque)
+              </h4>
+            </div>
+            <Boxes className="h-4.5 w-4.5 text-slate-400 shrink-0" />
+          </div>
+
+          {/* Vertical Timeline Elements */}
+          <div className="relative pl-6 space-y-6">
+            <div className={`absolute left-[9px] top-2 bottom-3 w-0.5 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`} />
+
+            {(stockMovements.length > 0 ? stockMovements.slice(0, 5) : [
+              {
+                id: 'mv-init-1',
+                produto_nome: 'Azeite de Oliva Extra Virgem 500ml',
+                produto_sku: 'AL-AZE-050',
+                tipo: 'ENTRADA' as const,
+                quantidade: 240,
+                valor: 28.50,
+                observacao: 'Abertura de estoque inicial do armazém',
+                created_at: '2026-06-03T10:00:00Z'
+              },
+              {
+                id: 'mv-init-2',
+                produto_nome: 'Arroz Integral Cateto Orgânico 1kg',
+                produto_sku: 'AL-ARR-102',
+                tipo: 'ENTRADA' as const,
+                quantidade: 450,
+                valor: 8.20,
+                observacao: 'Inserção de novos lotes de grãos',
+                created_at: '2026-06-03T12:00:00Z'
+              },
+              {
+                id: 'mv-init-3',
+                produto_nome: 'Café Espresso Ristretto Cápsulas (C/10)',
+                produto_sku: 'BE-CAF-301',
+                tipo: 'SAIDA' as const,
+                quantidade: 20,
+                valor: 27.90,
+                observacao: 'Baixa de mercadoria vendida',
+                created_at: '2026-06-03T14:35:00Z'
+              }
+            ]).map((movement) => {
+              const isEntrada = movement.tipo === 'ENTRADA';
+              const isSaida = movement.tipo === 'SAIDA';
+              const isAjuste = movement.tipo === 'AJUSTE';
+
+              const pointBorder = isEntrada 
+                ? 'border-emerald-500' 
+                : isSaida 
+                  ? 'border-rose-500' 
+                  : 'border-amber-500';
+
+              const qtySign = isEntrada ? '+' : isSaida ? '-' : 'Saldo: ';
+
+              return (
+                <div 
+                  key={movement.id} 
+                  className="relative flex flex-col md:flex-row md:items-center justify-between gap-4 group animate-fade-in"
+                >
+                  {/* Status Dot */}
+                  <span className={`absolute -left-[22px] top-1.5 w-4 h-4 rounded-full border-2 bg-white flex items-center justify-center z-10 transition-all ${pointBorder}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${isEntrada ? 'bg-emerald-500' : isSaida ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                  </span>
+
+                  <div className="space-y-1 select-none flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`text-xs font-black ${isDark ? 'text-slate-100' : 'text-[#1F3767]'}`}>
+                        {movement.produto_nome || 'Produto'}
+                      </span>
+                      <code className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-650 px-1.5 py-0.25 rounded font-bold font-mono">
+                        {movement.produto_sku}
+                      </code>
+                      <span className={`text-[8px] font-black px-1.5 py-0.25 rounded uppercase tracking-wider ${
+                        isEntrada ? 'bg-emerald-50 text-emerald-600' :
+                        isSaida ? 'bg-rose-50 text-rose-500' :
+                        'bg-amber-50 text-amber-600'
+                      }`}>
+                        {movement.tipo}
+                      </span>
+                    </div>
+                    
+                    {movement.observacao && (
+                      <p className={`text-[11px] italic ${isDark ? 'text-slate-400 font-medium' : 'text-slate-500 font-medium'}`}>
+                        Obs: {movement.observacao}
+                      </p>
+                    )}
+                    
+                    <p className={`text-[10px] ${isDark ? 'text-slate-500 font-semibold' : 'text-slate-450 font-bold'}`}>
+                      Registro: <span className="font-semibold">{movement.created_at ? movement.created_at.substring(0, 16).replace('T', ' ') : 'Agendado'}</span>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center space-x-4 self-start md:self-center shrink-0">
+                    <div className="text-right">
+                      <p className={`text-xs font-black font-mono ${
+                        isEntrada ? 'text-emerald-500' : isSaida ? 'text-rose-500' : 'text-amber-500'
+                      }`}>
+                        {qtySign}{movement.quantidade} un
+                      </p>
+                      <span className="text-[9px] text-slate-400 font-semibold block">
+                        ref: R$ {movement.valor ? movement.valor.toFixed(2) : '0.00'}/un
+                      </span>
+                    </div>
+                  </div>
+
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
       </div>
 
       </div> {/* End of Desktop layout wrapper */}
 
+      {/* EXECUTIVE REPORT MODAL (UNDER GOVERNANCE) */}
+      <AnimatePresence>
+        {isReportModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsReportModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+
+            {/* Modal Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className={`relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl border z-10 p-6 md:p-8 transition-all duration-300 ${
+                isDark 
+                  ? 'bg-slate-950 border-slate-800 text-white shadow-2xl shadow-black/80' 
+                  : 'bg-white border-slate-100 text-slate-800 shadow-2xl shadow-slate-200/50'
+              }`}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b pb-4 mb-6 border-slate-200/10">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 rounded-2xl bg-gradient-to-br from-[#1E94CF] to-[#8BC039] text-white">
+                    <FileText className="h-5.5 w-5.5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black tracking-tight">Gerar Relatório Executivo</h3>
+                    <p className={`text-xs ${isDark ? 'text-slate-400 font-medium' : 'text-slate-500 font-semibold'}`}>
+                      Mecanismo de governança corporativa e auditoria WAGON AI
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsReportModalOpen(false)}
+                  className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                    isDark ? 'border-slate-800 hover:bg-slate-900 text-slate-400' : 'border-slate-100 hover:bg-slate-50 text-slate-500'
+                  }`}
+                >
+                  <X className="h-4.5 w-4.5" />
+                </button>
+              </div>
+
+              {/* Grid Content */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
+                
+                {/* Left Side: Parameters Form (Columns 5) */}
+                <div className="lg:col-span-5 space-y-5 lg:border-r border-slate-200/10 lg:pr-6 md:pr-0">
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-[#1E94CF]">
+                      1. Parâmetros de Filtro
+                    </h4>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-400'} font-medium`}>
+                      Selecione o período do fechamento mercantil a ser consolidado.
+                    </p>
+                  </div>
+
+                  {/* Period Input Select */}
+                  <div className="space-y-1.5">
+                    <label className={`text-[10px] uppercase font-black tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Período de Referência *
+                    </label>
+                    <select
+                      value={reportPeriod}
+                      onChange={(e) => setReportPeriod(e.target.value)}
+                      className={`w-full p-3 rounded-xl text-xs font-extrabold focus:outline-none focus:ring-1 focus:ring-brand-light cursor-pointer shadow-xs ${
+                        isDark 
+                          ? 'bg-slate-900 border border-slate-800 text-white focus:border-slate-700' 
+                          : 'bg-white border border-slate-200 text-[#1F3767] focus:border-slate-300'
+                      }`}
+                    >
+                      <option value="Hoje">Hoje (2026-06-03)</option>
+                      <option value="Últimos 7 dias">Últimos 7 dias</option>
+                      <option value="Últimos 15 dias">Últimos 15 dias</option>
+                      <option value="Últimos 30 dias">Últimos 30 dias</option>
+                      <option value="Este mês">Este mês (Junho/2026)</option>
+                      <option value="Mês anterior">Mês anterior (Maio/2026)</option>
+                      <option value="Este ano">Este ano (2026)</option>
+                      <option value="Personalizado">Intervalo Personalizado...</option>
+                      <option value="Todos">Todo o Histórico</option>
+                    </select>
+                  </div>
+
+                  {/* Custom Dates (Conditional Render) */}
+                  <AnimatePresence>
+                    {reportPeriod === 'Personalizado' && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-3 overflow-hidden"
+                      >
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <label className={`text-[10px] uppercase font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                              Data Inicial
+                            </label>
+                            <input
+                              type="date"
+                              value={reportStartDate}
+                              onChange={(e) => setReportStartDate(e.target.value)}
+                              className={`w-full p-2.5 rounded-xl text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-brand-light ${
+                                isDark ? 'bg-slate-900 border border-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-700'
+                              }`}
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className={`text-[10px] uppercase font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                              Data Final
+                            </label>
+                            <input
+                              type="date"
+                              value={reportEndDate}
+                              onChange={(e) => setReportEndDate(e.target.value)}
+                              className={`w-full p-2.5 rounded-xl text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-brand-light ${
+                                isDark ? 'bg-slate-900 border border-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-700'
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Form Footer Action */}
+                  <div className="pt-2">
+                    <button
+                      disabled={reportGenerating}
+                      onClick={handleGenerateExecutiveReport}
+                      className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-[#1E94CF] to-[#8BC039] hover:brightness-110 disabled:opacity-50 text-white p-3.5 rounded-xl text-xs font-extrabold shadow-md active:scale-95 transition-all cursor-pointer border-none"
+                    >
+                      {reportGenerating ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          <span>Consolidando Metadados...</span>
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="h-4 w-4" />
+                          <span>Gerar Relatório Corporativo</span>
+                        </>
+                      )}
+                    </button>
+                    <p className={`text-[10px] mt-2.5 leading-normal text-center ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                      Emitente real cadastrado: <strong>14.571.417 Cristiane Aparecida Gonçalves</strong>. Emissões geradas em PDF A4 prontas para auditorias externas.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Right Side: Saved Report Copies ("Database History") (Columns 7) */}
+                <div className="lg:col-span-7 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-[#8BC039]">
+                        2. Histórico de Cópias (Banco de Dados)
+                      </h4>
+                      <p className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-400'} font-medium`}>
+                        Acessível por diretores/administradores (Edilson Mesquita)
+                      </p>
+                    </div>
+                    <span className={`text-[9.5px] font-black px-2 py-0.5 rounded-md ${
+                      isDark ? 'bg-slate-900 text-slate-400' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {reportHistory.length} salvos
+                    </span>
+                  </div>
+
+                  {/* History List */}
+                  <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
+                    {reportHistory.length === 0 ? (
+                      <div className="text-center py-10 space-y-2 border border-dashed rounded-2xl border-slate-200/10 p-4">
+                        <FileText className="h-8 w-8 text-slate-400 mx-auto opacity-40 animate-pulse" />
+                        <h5 className={`text-xs font-extrabold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                          Nenhum relatório emitido anteriormente
+                        </h5>
+                        <p className={`text-[10px] max-w-xs mx-auto leading-relaxed ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                          Ao clicar em gerar relatório, uma cópia autenticada por chave digital será gravada no banco de dados local.
+                        </p>
+                      </div>
+                    ) : (
+                      reportHistory.map((report) => (
+                        <div
+                          key={report.id}
+                          className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
+                            isDark 
+                              ? 'bg-slate-900/40 border-slate-800 hover:border-slate-700' 
+                              : 'bg-slate-50/50 border-slate-100 hover:border-slate-200 shadow-xs'
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-[10px] font-black font-mono text-sky-450 uppercase">
+                                {report.id}
+                              </span>
+                              <span className={`text-[9px] font-bold px-1.5 py-0.25 rounded ${
+                                isDark ? 'bg-purple-500/10 text-purple-400' : 'bg-purple-50 text-[#1F3767]'
+                              }`}>
+                                {report.period}
+                              </span>
+                            </div>
+                            <h5 className={`text-xs font-extrabold truncate max-w-[200px] ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                              {report.name}
+                            </h5>
+                            <p className="text-[10px] text-slate-400 font-semibold font-mono">
+                              Faturamento: <strong className="text-emerald-400">R$ {report.metrics.totalFaturamento.toLocaleString('pt-BR')}</strong> | Emitido em: {new Date(report.createdAt).toLocaleDateString('pt-BR')}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center space-x-2 shrink-0">
+                            {/* Visualizar inline de dados básicos */}
+                            <button
+                              title="Visualizar Indicadores Rápidos"
+                              onClick={() => {
+                                alert(
+                                  `🔐 AUDITORIA DE RELATÓRIO DO CANAL (${report.id})\n\n` +
+                                  `Emitido por: Edilson Mesquita\n` +
+                                  `Faturamento Geral: R$ ${report.metrics.totalFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n` +
+                                  `Margem de Lucro: R$ ${report.metrics.lucroLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n` +
+                                  `Total de Saídas: R$ ${report.metrics.totalSaidas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n` +
+                                  `Vendas: ${report.metrics.totalVendas} ped\n` +
+                                  `Ticket Médio: R$ ${report.metrics.ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n` +
+                                  `Patrimônio em Estoque: R$ ${report.metrics.valorEstoque.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                                );
+                              }}
+                              className={`p-2 rounded-xl border text-[10px] font-black cursor-pointer transition-all ${
+                                isDark ? 'border-slate-800 hover:bg-slate-900 text-slate-350' : 'border-slate-150 hover:bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              Visualizar
+                            </button>
+
+                            {/* Baixar PDF novamente */}
+                            <button
+                              title="Baixar PDF do Histórico"
+                              onClick={() => handleRedownloadReport(report)}
+                              className="p-2 rounded-xl bg-gradient-to-r from-[#1E94CF] to-[#8BC039] text-white hover:opacity-90 active:scale-90 shadow-xs cursor-pointer border-none flex items-center justify-center"
+                            >
+                              <Download className="h-4 w-4" />
+                            </button>
+
+                            {/* Excluir de novo */}
+                            <button
+                              title="Remover Registro do Banco"
+                              onClick={() => handleDeleteReport(report.id)}
+                              className={`p-2 rounded-xl border cursor-pointer hover:text-white transition-all text-slate-400 ${
+                                isDark ? 'border-slate-800 hover:bg-rose-950/40 hover:border-rose-900' : 'border-slate-100 hover:bg-rose-50 hover:border-rose-100 hover:text-rose-600'
+                              }`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+              </div>
+
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+

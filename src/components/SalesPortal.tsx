@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Users, 
@@ -37,9 +37,21 @@ import {
   ArrowRight,
   Package,
   Clock,
-  Calendar
+  Calendar,
+  Plus,
+  PlusCircle,
+  User,
+  ShoppingBag,
+  CreditCard,
+  AlertTriangle,
+  ArrowUp,
+  Download,
+  Share2,
+  Copy,
+  Send
 } from 'lucide-react';
 import { Client, Order, FinancialRecord, Seller, Product, OrderItem } from '../types';
+import { generateInvoicePDF } from '../utils/pdfGenerator';
 
 interface SalesPortalProps {
   sellers: Seller[];
@@ -48,6 +60,7 @@ interface SalesPortalProps {
   orders: Order[];
   onAddOrder: (order: Order) => void;
   financialRecords: FinancialRecord[];
+  onAddClient?: (client: Client) => void | Promise<void>;
 }
 
 export default function SalesPortal({
@@ -56,7 +69,8 @@ export default function SalesPortal({
   products,
   orders,
   onAddOrder,
-  financialRecords
+  financialRecords,
+  onAddClient
 }: SalesPortalProps) {
   // Find the first active seller as default, or fall back to any
   const activeSellers = sellers.filter(s => s.status === 'Ativo');
@@ -67,8 +81,150 @@ export default function SalesPortal({
   // Target Seller Object
   const currentSeller = sellers.find(s => s.id === selectedSellerId) || sellers[0];
 
-  // Portal view states: 'dashboard' | 'history' | 'new-sale'
-  const [portalMode, setPortalMode] = useState<'dashboard' | 'history' | 'new-sale'>('dashboard');
+  // Portal view states: 'central' | 'dashboard' | 'history' | 'new-sale'
+  const [portalMode, setPortalMode] = useState<'central' | 'dashboard' | 'history' | 'new-sale'>('central');
+
+  // CLIENT REGISTRATION MODAL STATES
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [businessName, setBusinessName] = useState('');
+  const [cnpjInput, setCnpjInput] = useState('');
+  const [ownerInput, setOwnerInput] = useState('');
+  const [phoneInput, setPhoneInput] = useState('');
+  const [cityInput, setCityInput] = useState('');
+  const [addressInput, setAddressInput] = useState('');
+  const [isSavingClient, setIsSavingClient] = useState(false);
+  const [clientSuccessMessage, setClientSuccessMessage] = useState<string | null>(null);
+
+  // SCROLL TO TOP STATE & HANDLERS
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (e.currentTarget.scrollTop > 200) {
+      setShowScrollTop(true);
+    } else {
+      setShowScrollTop(false);
+    }
+  };
+
+  const scrollToTop = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  // SHARE STATES & HANDLERS
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [shareOrder, setShareOrder] = useState<Order | null>(null);
+  const [copiedText, setCopiedText] = useState(false);
+
+  const handleSharePDF = async (order: Order) => {
+    const text = `Pedido ${order.id}\nCliente: ${order.clientName}\nValor: R$ ${order.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+    const shareUrl = `https://app.wagon.ai/pedido/${order.id}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Pedido ${order.id} - Wagon AI`,
+          text: text,
+          url: shareUrl,
+        });
+        return;
+      } catch (err) {
+        console.warn('[Web Share API Error, opening fallback modal]', err);
+      }
+    }
+
+    // Web Share API not available or failed -> Open fallback modal!
+    setShareOrder(order);
+    setIsShareModalOpen(true);
+    setCopiedText(false);
+  };
+
+  // CNPJ AND PHONE MASK HELPERS
+  const formatCNPJ = (value: string) => {
+    const raw = value.replace(/\D/g, '');
+    if (raw.length <= 2) return raw;
+    if (raw.length <= 5) return `${raw.slice(0, 2)}.${raw.slice(2)}`;
+    if (raw.length <= 8) return `${raw.slice(0, 2)}.${raw.slice(2, 5)}.${raw.slice(5)}`;
+    if (raw.length <= 12) return `${raw.slice(0, 2)}.${raw.slice(2, 5)}.${raw.slice(5, 8)}/${raw.slice(8)}`;
+    return `${raw.slice(0, 2)}.${raw.slice(2, 5)}.${raw.slice(5, 8)}/${raw.slice(8, 12)}-${raw.slice(12, 14)}`;
+  };
+
+  const formatPhone = (value: string) => {
+    const raw = value.replace(/\D/g, '');
+    if (raw.length <= 2) return raw;
+    if (raw.length <= 7) return `(${raw.slice(0, 2)}) ${raw.slice(2)}`;
+    return `(${raw.slice(0, 2)}) ${raw.slice(2, 7)}-${raw.slice(7, 11)}`;
+  };
+
+  const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCnpjInput(formatCNPJ(e.target.value));
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPhoneInput(formatPhone(e.target.value));
+  };
+
+  const handleSaveClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!businessName || !cnpjInput) {
+      alert('Por favor, preencha o Nome do Negócio e o CNPJ.');
+      return;
+    }
+
+    setIsSavingClient(true);
+    try {
+      const newClient: Client = {
+        id: `CLI-${Math.floor(1000 + Math.random() * 9000).toString()}`,
+        name: businessName,
+        cnpj: cnpjInput,
+        owner: ownerInput || 'Não informado',
+        phone: phoneInput || 'Não informado',
+        city: cityInput || 'Não informada',
+        endereco: addressInput || 'Não informado',
+        email: `${businessName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'venda'}@wagon.com`,
+        creditLimit: 30000,
+        debtBalance: 0,
+        region: 'Sudeste',
+        purchaseCount: 0,
+        totalSpent: 0,
+        riskClass: 'A',
+        status: 'Ativo',
+        consignments: [],
+        salesRep: currentSeller?.name || 'Vendedor'
+      };
+
+      if (onAddClient) {
+        await onAddClient(newClient);
+      }
+
+      setClientSuccessMessage(`Cliente "${businessName}" cadastrado com sucesso! Sincronizado imediatamente com a conta ADM.`);
+      
+      // Clear fields
+      setBusinessName('');
+      setCnpjInput('');
+      setOwnerInput('');
+      setPhoneInput('');
+      setCityInput('');
+      setAddressInput('');
+
+      setTimeout(() => {
+        setClientSuccessMessage(null);
+        setIsClientModalOpen(false);
+      }, 3000);
+
+    } catch (error) {
+      console.error(error);
+      alert('Erro ao cadastrar cliente.');
+    } finally {
+      setIsSavingClient(false);
+    }
+  };
 
   // Currently focused order (for showing invoice/receipt modal)
   const [focusOrder, setFocusOrder] = useState<Order | null>(null);
@@ -125,9 +281,13 @@ export default function SalesPortal({
     product: Product;
     quantity: number;
     discountPercent: number; // custom discount per SKU item
+    discountType?: 'percent' | 'value';
+    discountValueAmount?: number;
   }
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentTerm, setPaymentTerm] = useState<'Vista' | '7 Dias' | '15 Dias' | '30 Dias' | '45 Dias'>('30 Dias');
+  const [paymentMethod, setPaymentMethod] = useState<'Dinheiro' | 'PIX' | 'Cartão' | 'Boleto' | 'Consignado'>('Boleto');
+  const [removalProduct, setRemovalProduct] = useState<{ id: string; name: string } | null>(null);
 
   // Triggering new sale start
   const handleStartNewSale = () => {
@@ -135,9 +295,20 @@ export default function SalesPortal({
     setCart([]);
     setWizardStep(1);
     setPaymentTerm('30 Dias');
+    setPaymentMethod('Boleto');
     setClientSearch('');
     setProductSearch('');
     setPortalMode('new-sale');
+  };
+
+  const handleDecrementQuantity = (productId: string) => {
+    const item = cart.find(i => i.product.id === productId);
+    if (!item) return;
+    if (item.quantity > 1) {
+      handleUpdateCartQuantity(productId, item.quantity - 1);
+    } else {
+      setRemovalProduct({ id: productId, name: item.product.name });
+    }
   };
 
   // Add Item to cart helpers
@@ -158,7 +329,7 @@ export default function SalesPortal({
         alert('Estoque esgotado para esse item no sistema central.');
         return;
       }
-      setCart([...cart, { product, quantity: 1, discountPercent: 0 }]);
+      setCart([...cart, { product, quantity: 1, discountPercent: 0, discountType: 'percent', discountValueAmount: 0 }]);
     }
   };
 
@@ -176,8 +347,8 @@ export default function SalesPortal({
   };
 
   const handleUpdateCartDiscount = (productId: string, val: number) => {
-    const cleanDiscount = Math.max(0, Math.min(100, val));
-    setCart(cart.map(i => i.product.id === productId ? { ...i, discountPercent: cleanDiscount } : i));
+    const rawVal = Math.max(0, val);
+    setCart(cart.map(i => i.product.id === productId ? { ...i, discountPercent: rawVal } : i));
   };
 
   const handleRemoveCartItem = (productId: string) => {
@@ -192,7 +363,12 @@ export default function SalesPortal({
     // total after distinct margins and item-wise discounts
     const totalAfterDiscounts = cart.reduce((sum, item) => {
       const originalItemTotal = item.product.sellingPrice * item.quantity;
-      const discountAmount = originalItemTotal * (item.discountPercent / 100);
+      let discountAmount = 0;
+      if (item.discountType === 'value' && item.discountValueAmount !== undefined) {
+        discountAmount = Math.min(originalItemTotal, item.discountValueAmount);
+      } else {
+        discountAmount = originalItemTotal * (item.discountPercent / 100);
+      }
       return sum + (originalItemTotal - discountAmount);
     }, 0);
 
@@ -230,9 +406,14 @@ export default function SalesPortal({
     // Convert wizard cart to system order details
     const orderItems: OrderItem[] = cart.map(item => {
       const originalTotal = item.product.sellingPrice * item.quantity;
-      const discount = originalTotal * (item.discountPercent / 100);
+      let discount = 0;
+      if (item.discountType === 'value' && item.discountValueAmount !== undefined) {
+        discount = Math.min(originalTotal, item.discountValueAmount);
+      } else {
+        discount = originalTotal * (item.discountPercent / 100);
+      }
       return {
-        id: `Item-${Math.floor(1000 + Math.random() * 9000)}`,
+        id: `Item-${Math.floor(1000 + Math.random() * 9000).toString()}`,
         productId: item.product.id,
         productName: item.product.name,
         quantity: item.quantity,
@@ -241,8 +422,17 @@ export default function SalesPortal({
       };
     });
 
+    const generatedId = `PED-${Math.floor(40000 + Math.random() * 9999)}`;
+    const generatedUuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+
     const newOrder: Order = {
-      id: `PED-${Math.floor(40000 + Math.random() * 9999)}`,
+      id: generatedId,
+      uuid: generatedUuid,
+      pdfUrl: `https://app.wagon.ai/pedido/${generatedId}/pdf`,
       clientId: wizardClient.id,
       clientName: wizardClient.name,
       date: new Date().toISOString().split('T')[0],
@@ -263,6 +453,28 @@ export default function SalesPortal({
 
     // Commit to persistent global state
     onAddOrder(newOrder);
+
+    // Auto-generate and cache PDF Base64 string directly on order creation
+    generateInvoicePDF(newOrder, clients, products, { isDownload: false }).then(doc => {
+      try {
+        const dataUri = doc.output('datauristring');
+        const updatedOrder = { ...newOrder, pdfUrl: dataUri };
+        
+        // Update both focus target and persistent storage
+        setFocusOrder(updatedOrder);
+        const cachedOrders = localStorage.getItem('vertice_erp_orders');
+        if (cachedOrders) {
+          const allOrders: Order[] = JSON.parse(cachedOrders);
+          const index = allOrders.findIndex(o => o.id === newOrder.id);
+          if (index !== -1) {
+            allOrders[index].pdfUrl = dataUri;
+            localStorage.setItem('vertice_erp_orders', JSON.stringify(allOrders));
+          }
+        }
+      } catch (err) {
+        console.error('Error auto-generating PDF on order confirmation:', err);
+      }
+    });
 
     // Zoom into invoice/receipt
     setFocusOrder(newOrder);
@@ -288,11 +500,11 @@ export default function SalesPortal({
 
   // Dynamic invoice URL for QR code
   const getReceiptURL = (orderId: string) => {
-    return `https://verticedistribuidora.com.br/comprovante/digitais/${orderId}`;
+    return `https://app.wagon.ai/pedido/${orderId}`;
   };
 
   return (
-    <div className="min-h-screen bg-[#111827] text-slate-100 rounded-3xl overflow-hidden shadow-2xl flex flex-col font-sans">
+    <div className="h-full w-full bg-[#111827] text-slate-100 rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl flex flex-col font-sans">
       
       {/* Top Professional Portal branding header */}
       <div className="bg-slate-900 border-b border-slate-800 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -318,7 +530,7 @@ export default function SalesPortal({
               value={selectedSellerId}
               onChange={(e) => {
                 setSelectedSellerId(e.target.value);
-                setPortalMode('dashboard');
+                setPortalMode('central');
               }}
               className="bg-slate-900 text-emerald-400 font-bold focus:outline-none cursor-pointer text-xs pr-1"
             >
@@ -340,47 +552,152 @@ export default function SalesPortal({
       </div>
 
       {/* Navigation tabs row exclusive style */}
-      <div className="bg-slate-900/60 px-6 py-3 border-b border-slate-800/45 flex flex-wrap justify-between items-center gap-3">
-        
-        <div className="flex items-center space-x-3 text-xs">
-          <button
-            onClick={() => setPortalMode('dashboard')}
-            className={`px-4 py-2 rounded-lg font-bold transition-all cursor-pointer ${
-              portalMode === 'dashboard'
-                ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/10'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            Acompanhamento Geral
-          </button>
+      {portalMode !== 'central' && (
+        <div className="bg-slate-900/60 px-6 py-3 border-b border-slate-800/45 flex flex-wrap justify-between items-center gap-3">
           
+          <div className="flex items-center space-x-3 text-xs">
+            <button
+              onClick={() => setPortalMode('central')}
+              className="flex items-center space-x-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded-lg font-extrabold mr-2 hover:text-white transition-all cursor-pointer text-[10.5px]"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              <span>Voltar à Central</span>
+            </button>
+
+            <button
+              onClick={() => setPortalMode('dashboard')}
+              className={`px-4 py-2 rounded-lg font-bold transition-all cursor-pointer ${
+                portalMode === 'dashboard'
+                  ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              Acompanhamento Geral
+            </button>
+            
+            <button
+              onClick={() => setPortalMode('history')}
+              className={`px-4 py-2 rounded-lg font-bold transition-all cursor-pointer ${
+                portalMode === 'history'
+                  ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              Histórico de Faturamentos ({sellerOrders.length})
+            </button>
+          </div>
+
+          {/* Dynamic primary trigger */}
           <button
-            onClick={() => setPortalMode('history')}
-            className={`px-4 py-2 rounded-lg font-bold transition-all cursor-pointer ${
-              portalMode === 'history'
-                ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/10'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
+            onClick={handleStartNewSale}
+            className="flex items-center space-x-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-5 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-500/10 transform transition-all cursor-pointer hover:scale-102 active:scale-97"
           >
-            Histórico de Faturamentos ({sellerOrders.length})
+            <ShoppingCart className="h-4 w-4" />
+            <span>Faturar Nova Venda</span>
           </button>
+
         </div>
-
-        {/* Dynamic primary trigger */}
-        <button
-          onClick={handleStartNewSale}
-          className="flex items-center space-x-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-5 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-500/10 transform transition-all cursor-pointer hover:scale-102 active:scale-97"
-        >
-          <ShoppingCart className="h-4 w-4" />
-          <span>Faturar Nova Venda</span>
-        </button>
-
-      </div>
+      )}
 
       {/* Main active portal page area */}
-      <div className="flex-1 p-6 overflow-y-auto">
+      <div 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 p-6 overflow-y-auto relative scroll-smooth"
+      >
         
         <AnimatePresence mode="wait">
+
+          {/* CENTRAL OPERACIONAL DE VENDAS */}
+          {portalMode === 'central' && (
+            <motion.div
+              key="central"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="flex flex-col items-center justify-center max-w-4xl mx-auto py-8 px-4"
+            >
+              <div className="text-center max-w-xl space-y-2 mb-10">
+                <span className="inline-flex items-center space-x-1 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full text-[10px] font-black text-emerald-400 uppercase tracking-widest leading-none">
+                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping"></span>
+                  <span>Sincronização Ativa</span>
+                </span>
+                <h2 className="text-2xl font-black text-white tracking-tight uppercase">Central de Operações Comerciais</h2>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Gerencie sua carteira de estabelecimentos e lance novos pedidos de faturamento para distribuição nacional em poucos segundos.
+                </p>
+              </div>
+
+              {/* TWO main action cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
+                
+                {/* CARD 1: Cadastrar Novo Cliente */}
+                <button
+                  type="button"
+                  onClick={() => setIsClientModalOpen(true)}
+                  className="group bg-slate-900 hover:bg-slate-850 border border-slate-800/80 hover:border-slate-700/80 p-8 rounded-2xl text-left transition-all duration-300 flex flex-col justify-between space-y-6 focus:outline-none focus:ring-2 focus:ring-sky-500/50 cursor-pointer shadow-xl h-full min-h-[220px]"
+                >
+                  <div className="space-y-4">
+                    <div className="w-12 h-12 bg-gradient-to-br from-sky-400 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg group-hover:scale-105 transition-all">
+                      <PlusCircle className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-1.5">
+                        ➕ Cadastrar Novo Cliente
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Cadastrar um novo estabelecimento na carteira comercial.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-1.5 text-xs text-sky-400 font-extrabold uppercase tracking-wider group-hover:translate-x-1 transition-all pt-2">
+                    <span>Cadastrar agora</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                </button>
+
+                {/* CARD 2: Registrar Nova Venda */}
+                <button
+                  type="button"
+                  onClick={handleStartNewSale}
+                  className="group bg-slate-900 hover:bg-slate-850 border border-slate-800/80 hover:border-slate-700/80 p-8 rounded-2xl text-left transition-all duration-300 flex flex-col justify-between space-y-6 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 cursor-pointer shadow-xl h-full min-h-[220px]"
+                >
+                  <div className="space-y-4">
+                    <div className="w-12 h-12 bg-gradient-to-br from-emerald-400 to-teal-500 rounded-xl flex items-center justify-center text-slate-950 shadow-lg group-hover:scale-105 transition-all">
+                      <ShoppingCart className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-1.5">
+                        🤝 Registrar Nova Venda
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Selecione o estabelecimento, monte o carrinho e fature em tempo real.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-1.5 text-xs text-emerald-400 font-extrabold uppercase tracking-wider group-hover:translate-x-1 transition-all pt-2">
+                    <span>Registrar venda</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                </button>
+
+              </div>
+
+              {/* SECONDARY DASHBOARD NAVIGATION SWITCH */}
+              <div className="mt-12 flex flex-col items-center space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setPortalMode('dashboard')}
+                  className="flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white px-7 py-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md shadow-slate-950/20 active:scale-97"
+                >
+                  <TrendingUp className="h-4 w-4 text-emerald-400" />
+                  <span>Acessar Meu Dashboard</span>
+                </button>
+                <span className="text-[10.5px] text-slate-500 font-bold">Faturamento, comissões pendentes e carteira ativa</span>
+              </div>
+
+            </motion.div>
+          )}
           
           {/* DASHBOARD MODE */}
           {portalMode === 'dashboard' && (
@@ -417,6 +734,54 @@ export default function SalesPortal({
                   </div>
                 </div>
               </div>
+
+              {/* Meta de Vendas Pessoal */}
+              {currentSeller && (
+                <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-3 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none"></div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 z-10 relative">
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] text-[#1E94CF] uppercase font-black tracking-wider block">Meta de Vendas Estipulada</span>
+                      <p className="text-xs text-slate-400">
+                        Seu progresso de faturamento em relação à meta definida pela gerência para este ciclo.
+                      </p>
+                    </div>
+                    
+                    <div className="text-left sm:text-right">
+                      <span className="text-[9px] uppercase font-semibold text-slate-500 block">Progresso Realizado</span>
+                      <div className="flex items-baseline space-x-1 sm:justify-end">
+                        <strong className="text-emerald-400 font-mono font-black text-sm">
+                          R$ {totalSold.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </strong>
+                        <span className="text-slate-500 font-semibold text-[10px]">/</span>
+                        <strong className="text-white font-mono font-black text-sm">
+                          R$ {(currentSeller.target || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1 z-10 relative">
+                    <div className="w-full bg-slate-950 h-3 rounded-full overflow-hidden border border-slate-800">
+                      <div 
+                        className={`h-full transition-all duration-500 rounded-full ${
+                          (totalSold / (currentSeller.target || 1)) * 100 >= 100 
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-400' 
+                            : 'bg-gradient-to-r from-[#1E94CF] to-indigo-500'
+                        }`}
+                        style={{ width: `${Math.min((totalSold / (currentSeller.target || 1)) * 100, 100)}%` }}
+                      ></div>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] text-slate-500 font-black">
+                      <span>0%</span>
+                      <span className="text-[#1E94CF] uppercase tracking-wide">
+                        {((totalSold / (currentSeller.target || 1)) * 100).toFixed(1)}% Alcançado
+                      </span>
+                      <span>100%+</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* FIVE SPECIFIC MANDATED BULLET STATS CARDS */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -715,8 +1080,15 @@ export default function SalesPortal({
                             {isOutOfStock ? (
                               <span className="bg-rose-500/10 text-rose-450 border border-rose-500/20 text-[9px] font-black uppercase px-2 py-1 rounded">Sem Estoque</span>
                             ) : itemInCart ? (
-                              <div className="flex items-center space-x-1.5">
-                                <span className="bg-emerald-500 text-slate-950 font-black text-[9.5px] w-5 h-5 rounded-full flex items-center justify-center">
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDecrementQuantity(product.id)}
+                                  className="w-7 h-7 bg-slate-800 hover:bg-slate-755 text-slate-300 hover:text-white rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer transition-colors"
+                                >
+                                  -
+                                </button>
+                                <span className="font-mono text-xs font-black text-white w-6 text-center">
                                   {itemInCart.quantity}
                                 </span>
                                 <button
@@ -788,7 +1160,7 @@ export default function SalesPortal({
                         <tr>
                           <th className="p-3">Item / SKU</th>
                           <th className="p-3 text-center">Quantidade</th>
-                          <th className="p-3 text-center">Desconto (%)</th>
+                          <th className="p-3 text-center">Desconto (% ou R$)</th>
                           <th className="p-3 text-right">Preço de Tabela</th>
                           <th className="p-3 text-right">Total Faturado</th>
                           <th className="p-3 text-center">Excluir</th>
@@ -797,14 +1169,19 @@ export default function SalesPortal({
                       <tbody className="divide-y divide-slate-850 font-medium text-slate-300">
                         {cart.map((item) => {
                           const originalItemTotal = item.product.sellingPrice * item.quantity;
-                          const discountAmount = originalItemTotal * (item.discountPercent / 100);
+                          let discountAmount = 0;
+                          if (item.discountType === 'value' && item.discountValueAmount !== undefined) {
+                            discountAmount = Math.min(originalItemTotal, item.discountValueAmount);
+                          } else {
+                            discountAmount = originalItemTotal * (item.discountPercent / 100);
+                          }
                           const cleanItemTotal = originalItemTotal - discountAmount;
                           
                           return (
                             <tr key={item.product.id} className="hover:bg-slate-900/60 transition-colors">
                               <td className="p-3">
                                 <span className="font-bold text-slate-100 block">{item.product.name}</span>
-                                <span className="font-mono text-[9px] text-slate-500 block">Stock: {item.product.stock} {item.product.unit} available</span>
+                                <span className="font-mono text-[9px] text-slate-500 block">Estoque: {item.product.stock} {item.product.unit} disponível</span>
                               </td>
                               
                               {/* Quantity slider/numeric */}
@@ -812,8 +1189,8 @@ export default function SalesPortal({
                                 <div className="flex items-center justify-center space-x-2">
                                   <button
                                     type="button"
-                                    onClick={() => handleUpdateCartQuantity(item.product.id, item.quantity - 1)}
-                                    className="w-6 h-6 bg-slate-850 hover:bg-slate-800 rounded flex items-center justify-center font-bold font-mono text-slate-300 cursor-pointer"
+                                    onClick={() => handleDecrementQuantity(item.product.id)}
+                                    className="w-7 h-7 bg-slate-850 hover:bg-slate-800 rounded-lg flex items-center justify-center font-bold font-mono text-slate-300 cursor-pointer transition-colors"
                                   >
                                     -
                                   </button>
@@ -822,37 +1199,111 @@ export default function SalesPortal({
                                     type="number"
                                     value={item.quantity}
                                     onChange={(e) => handleUpdateCartQuantity(item.product.id, Number(e.target.value))}
-                                    className="w-12 bg-slate-950 border border-slate-800 text-center rounded p-1 font-bold text-white focus:outline-none"
+                                    className="w-12 bg-slate-950 border border-slate-800 text-center rounded-lg p-1.5 font-bold text-white focus:outline-none"
                                   />
-
+ 
                                   <button
                                     type="button"
                                     onClick={() => handleUpdateCartQuantity(item.product.id, item.quantity + 1)}
-                                    className="w-6 h-6 bg-slate-850 hover:bg-slate-800 rounded flex items-center justify-center font-bold font-mono text-slate-300 cursor-pointer"
+                                    className="w-7 h-7 bg-slate-850 hover:bg-slate-800 rounded-lg flex items-center justify-center font-bold font-mono text-slate-300 cursor-pointer transition-colors"
                                   >
                                     +
                                   </button>
                                 </div>
                               </td>
-
-                              {/* Discount Percentage slider */}
+ 
+                              {/* Discount Percentage or fixed select slider */}
                               <td className="p-3">
-                                <div className="flex items-center space-x-2 justify-center max-w-[170px] mx-auto">
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max="20" // maximum commercial discount limit
-                                    value={item.discountPercent}
-                                    onChange={(e) => handleUpdateCartDiscount(item.product.id, Number(e.target.value))}
-                                    className="w-24 accent-emerald-500 cursor-pointer"
-                                  />
-                                  <span className="font-mono text-[10px] bg-slate-950 px-2 py-0.5 rounded text-emerald-400 font-bold shrink-0">
-                                    {item.discountPercent}%
-                                  </span>
+                                <div className="flex flex-col items-center space-y-1.5 justify-center max-w-[210px] mx-auto">
+                                  <div className="flex items-center bg-slate-950 p-1 rounded-md border border-slate-800">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setCart(cart.map(i => i.product.id === item.product.id ? { ...i, discountType: 'percent' } : i));
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                                        (item.discountType || 'percent') === 'percent'
+                                          ? 'bg-emerald-500 text-slate-950 font-black'
+                                          : 'text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      % Porc.
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setCart(cart.map(i => i.product.id === item.product.id ? { ...i, discountType: 'value' } : i));
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                                        item.discountType === 'value'
+                                          ? 'bg-emerald-500 text-slate-950 font-black'
+                                          : 'text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      R$ Valor
+                                    </button>
+                                  </div>
+                                  
+                                  <div className="flex flex-col items-center">
+                                    {(item.discountType || 'percent') === 'percent' ? (
+                                      <div className="space-y-1.5 flex flex-col items-center">
+                                        <div className="flex items-center space-x-1.5">
+                                          <input
+                                            type="range"
+                                            min="0"
+                                            max="100"
+                                            value={Math.min(100, item.discountPercent)}
+                                            onChange={(e) => handleUpdateCartDiscount(item.product.id, Number(e.target.value))}
+                                            className="w-24 accent-emerald-500 cursor-pointer text-xs"
+                                          />
+                                          <span className="font-mono text-[10px] bg-slate-950 px-1.5 py-0.5 rounded text-emerald-400 font-bold shrink-0">
+                                            {item.discountPercent}%
+                                          </span>
+                                        </div>
+                                        
+                                        <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">ou digite o desconto</span>
+                                        
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max="150"
+                                          value={item.discountPercent}
+                                          onChange={(e) => handleUpdateCartDiscount(item.product.id, Number(e.target.value))}
+                                          placeholder="0"
+                                          className={`w-20 bg-slate-950 border text-center rounded p-1 text-[11px] font-mono font-bold focus:outline-none ${
+                                            item.discountPercent > 100 
+                                              ? 'border-rose-500 text-rose-550 focus:ring-1 focus:ring-rose-500' 
+                                              : 'border-slate-800 text-slate-200 focus:ring-1 focus:ring-emerald-500'
+                                          }`}
+                                        />
+
+                                        {item.discountPercent > 100 && (
+                                          <span className="text-[9px] text-rose-500 font-black leading-tight text-center max-w-[130px] block animate-pulse mt-0.5">
+                                            O desconto máximo permitido é 100%.
+                                          </span>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center space-x-1 mt-1">
+                                        <span className="text-slate-500 text-[10px]">R$</span>
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={originalItemTotal}
+                                          value={item.discountValueAmount || 0}
+                                          onChange={(e) => {
+                                            const val = Math.max(0, Math.min(originalItemTotal, Number(e.target.value)));
+                                            setCart(cart.map(i => i.product.id === item.product.id ? { ...i, discountValueAmount: val } : i));
+                                          }}
+                                          className="w-20 bg-slate-100 text-slate-950 font-mono font-black text-center rounded p-1 text-[10.5px] focus:outline-none"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               </td>
 
-                              <td className="p-3 text-right text-slate-400 font-mono">
+                              <td className="p-3 text-right text-slate-450 font-mono">
                                 R$ {item.product.sellingPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </td>
 
@@ -865,6 +1316,7 @@ export default function SalesPortal({
                                   type="button"
                                   onClick={() => handleRemoveCartItem(item.product.id)}
                                   className="p-1.5 hover:bg-rose-500/10 hover:text-rose-450 rounded text-slate-500 transition-colors cursor-pointer"
+                                  title="Remover item"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </button>
@@ -876,23 +1328,94 @@ export default function SalesPortal({
                     </table>
                   </div>
 
-                  {/* Payment terms conditional select dropdown */}
-                  <div className="bg-slate-950/40 p-4 border border-slate-850 rounded-xl max-w-sm">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">Prazo de Pagamento Acordado</label>
-                    <select
-                      value={paymentTerm}
-                      onChange={(e) => setPaymentTerm(e.target.value as any)}
-                      className="bg-slate-900 border border-slate-805 text-emerald-400 font-bold text-xs p-2 rounded-lg w-full focus:outline-none cursor-pointer"
-                    >
-                      <option value="Vista">À Vista (PIX / Transferência)</option>
-                      <option value="7 Dias">Boleto - 7 Dias directos</option>
-                      <option value="15 Dias">Boleto - 15 Dias</option>
-                      <option value="30 Dias">Boleto - 30 Dias (Standard)</option>
-                      <option value="45 Dias">Boleto - 45 Dias (BNDES)</option>
-                    </select>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Payment methods and term */}
+                    <div className="bg-slate-950/40 p-4 border border-slate-850 rounded-2xl space-y-4">
+                      <div>
+                        <label className="text-[10px] uppercase font-black tracking-wider text-slate-400 block mb-1.5">Forma de Pagamento</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(['Dinheiro', 'PIX', 'Cartão', 'Boleto', 'Consignado'] as const).map((method) => {
+                            const isSel = paymentMethod === method;
+                            return (
+                              <button
+                                key={method}
+                                type="button"
+                                onClick={() => setPaymentMethod(method)}
+                                className={`p-2 text-center rounded-xl text-[10.5px] font-bold border transition-all cursor-pointer ${
+                                  isSel
+                                    ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400'
+                                    : 'bg-slate-900/60 border-slate-800 text-slate-450 hover:border-slate-700 hover:text-slate-205'
+                                }`}
+                              >
+                                {method}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {paymentMethod === 'Boleto' ? (
+                        <div>
+                          <label className="text-[10px] uppercase font-black tracking-wider text-slate-400 block mb-1.5">Prazo de Pagamento Acordado</label>
+                          <select
+                            value={paymentTerm}
+                            onChange={(e) => setPaymentTerm(e.target.value as any)}
+                            className="bg-slate-900 border border-slate-805 text-emerald-400 font-bold text-xs p-2 rounded-lg w-full focus:outline-none cursor-pointer"
+                          >
+                            <option value="Vista">À Vista (Boleto antecipado)</option>
+                            <option value="7 Dias">Boleto - 7 Dias diretos</option>
+                            <option value="15 Dias">Boleto - 15 Dias</option>
+                            <option value="30 Dias">Boleto - 30 Dias (Standard)</option>
+                            <option value="45 Dias">Boleto - 45 Dias (BNDES)</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-slate-900/40 rounded-xl border border-slate-800 text-[10px] text-slate-450 font-medium">
+                          Modalidade: <strong className="text-emerald-400">{paymentMethod}</strong> (Prazo de compensação padrão de 24h).
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Real-time totals summary */}
+                    <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-3.5 shadow-xl">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 block">Resumo do Pedido em Tempo Real</span>
+                      
+                      <div className="flex justify-between items-center text-xs text-slate-400">
+                        <span>Subtotal Bruto:</span>
+                        <strong className="font-mono text-slate-205">
+                          R$ {cartTotals.subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs text-rose-450">
+                        <span>Descontos Aplicados:</span>
+                        <strong className="font-mono">
+                          - R$ {cartTotals.discountTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+
+                      {cartTotals.discountTotal > 0 && (
+                        <div className="bg-emerald-550/5 border border-emerald-500/10 p-2.5 rounded-xl text-[10px] text-emerald-400 font-extrabold flex items-center space-x-1.5 leading-tight">
+                          <span>ℹ️ Economia agregada: R$ {cartTotals.discountTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({((cartTotals.discountTotal / (cartTotals.subtotal || 1)) * 100).toFixed(0)}% de desconto médio)</span>
+                        </div>
+                      )}
+
+                      <div className="border-t border-slate-800 pt-3 flex justify-between items-center">
+                        <span className="text-xs font-black text-white uppercase tracking-wider">Total Final:</span>
+                        <strong className="text-lg font-black font-mono text-emerald-400 leading-none">
+                          R$ {cartTotals.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="pt-4 border-t border-slate-800/80 flex justify-between">
+                  {cart.some(i => i.discountPercent > 100) && (
+                    <div className="bg-rose-500/10 border border-rose-500/20 p-3.5 rounded-xl text-center text-rose-450 text-xs font-black uppercase tracking-tight flex items-center justify-center space-x-2 animate-pulse">
+                      <span>⚠️ O desconto máximo permitido é 100%.</span>
+                    </div>
+                  )}
+
+                  <div className="pt-5 border-t border-slate-800/80 flex justify-between">
                     <button
                       type="button"
                       onClick={() => setWizardStep(2)}
@@ -904,7 +1427,7 @@ export default function SalesPortal({
                     
                     <button
                       type="button"
-                      disabled={cart.length === 0}
+                      disabled={cart.length === 0 || cart.some(i => i.discountPercent > 100)}
                       onClick={() => setWizardStep(5)}
                       className="flex items-center space-x-1 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 px-5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer"
                     >
@@ -916,101 +1439,258 @@ export default function SalesPortal({
                 </div>
               )}
 
-              {/* STEP 5 & 6: REVIEW AND CONFIRM DEALS */}
+              {/* STEP 5: REVIEW AND CONFIRM DEALS */}
               {wizardStep === 5 && (
-                <div className="space-y-4">
+                <div className="space-y-6">
                   
-                  <div className="space-y-1">
-                    <h4 className="text-xs font-black text-white uppercase tracking-wider">Passos 5 & 6: Revisão de Tributos & Confirmar Envio</h4>
-                    <p className="text-[10px] text-slate-405 font-semibold">Examine as contas, margem estipulada e confirme o envio para a fila de faturamento nacional</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs text-slate-300">
-                    
-                    {/* Summary card info */}
-                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800/80 space-y-3">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block pb-1 border-b border-slate-800">Associação Comercial</span>
-                      
-                      <div className="space-y-2">
-                        <p className="font-semibold text-slate-400">Vendedor Atribuído:</p>
-                        <strong className="text-slate-200 text-xs font-black block">{currentSeller?.name} ({currentSeller?.id})</strong>
+                  {/* Top Header */}
+                  <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2 text-emerald-400">
+                        <ShieldCheck className="h-4.5 w-4.5 animate-pulse" />
+                        <h4 className="text-xs font-black tracking-widest uppercase text-white">Revisão do Pedido • Faturamento Seguro</h4>
                       </div>
-
-                      <div className="space-y-2 pt-2 border-t border-slate-850/50">
-                        <p className="font-semibold text-slate-400">Cliente / Estabelecimento:</p>
-                        <strong className="text-slate-250 text-xs block font-bold">{wizardClient?.name}</strong>
-                        <span className="font-mono text-[9px] text-slate-500 block">{wizardClient?.cnpj}</span>
-                      </div>
-
-                      <div className="space-y-2 pt-2 border-t border-slate-850/50">
-                        <p className="font-semibold text-slate-400">Prazo de Cobrança:</p>
-                        <strong className="text-emerald-400 font-black">{paymentTerm}</strong>
-                      </div>
+                      <p className="text-[10px] text-slate-400 font-medium">Checkout de alta fidelidade. Confirme todos os dados fiscais e financeiros abaixo.</p>
                     </div>
 
-                    {/* Monetary resume block */}
-                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800/80 space-y-3.5">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block pb-1 border-b border-slate-800">Demonstrativo de Valores</span>
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-1.5 rounded-lg flex items-center space-x-2 font-black text-[10px] text-emerald-400 font-mono">
+                      <span>✓ PRONTO PARA EMISSÃO</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    
+                    {/* Left & Middle Column (Details) */}
+                    <div className="lg:col-span-2 space-y-5">
                       
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-slate-400">Subtotal Bruto:</span>
-                        <span className="font-mono text-slate-200">R$ {cartTotals.subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      {/* CLIENTE DETAILS */}
+                      <div className="bg-slate-950/40 p-5 rounded-2xl border border-slate-850 space-y-4">
+                        <div className="flex items-center space-x-2 text-slate-350 border-b border-slate-850 pb-2.5">
+                          <User className="h-4 w-4 text-sky-450" />
+                          <h5 className="text-[10.5px] uppercase font-black tracking-wider text-slate-205">Informações do Cliente</h5>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-medium text-slate-400">
+                          <div>
+                            <span className="text-[9.5px] uppercase font-bold text-slate-500 block mb-1">Razão Social / Nome</span>
+                            <strong className="text-white text-sm font-black">{wizardClient?.name}</strong>
+                          </div>
+                          <div>
+                            <span className="text-[9.5px] uppercase font-bold text-slate-500 block mb-1">CNPJ</span>
+                            <span className="font-mono text-slate-200 font-bold bg-slate-900 border border-slate-800 px-2 py-1 rounded text-[10.5px]">
+                              {wizardClient?.cnpj}
+                            </span>
+                          </div>
+                          <div className="md:col-span-2">
+                            <span className="text-[9.5px] uppercase font-bold text-slate-500 block mb-1">Cidade / Endereço</span>
+                            <p className="text-slate-200 font-bold">
+                              {wizardClient?.city || 'Não informada'} {wizardClient?.endereco ? `• ${wizardClient.endereco}` : ''}
+                            </p>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="flex justify-between font-semibold text-rose-450 text-[11px]">
-                        <span>Descontos Concedidos:</span>
-                        <span className="font-mono">- R$ {cartTotals.discountTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      {/* PRODUTOS LIST / CADERNO */}
+                      <div className="bg-slate-950/40 p-5 rounded-2xl border border-slate-850 space-y-3">
+                        <div className="flex items-center space-x-2 text-slate-350 border-b border-slate-850 pb-2.5">
+                          <ShoppingBag className="h-4 w-4 text-emerald-455" />
+                          <h5 className="text-[10.5px] uppercase font-black tracking-wider text-slate-205">Itens Selecionados ({cart.length} SKUs)</h5>
+                        </div>
+
+                        <div className="overflow-x-auto p-0.5">
+                          <table className="w-full text-left font-sans text-xs">
+                            <thead className="bg-slate-900 border-b border-slate-800 text-[9px] uppercase font-bold text-slate-500">
+                              <tr>
+                                <th className="p-2.5">Produto</th>
+                                <th className="p-2.5 text-center">Quantidade</th>
+                                <th className="p-2.5 text-right">Valor Unitário</th>
+                                <th className="p-2.5 text-right">Subtotal faturado</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-850 font-semibold text-slate-300">
+                              {cart.map((item) => {
+                                const originalItemTotal = item.product.sellingPrice * item.quantity;
+                                let itemDiscount = 0;
+                                if (item.discountType === 'value' && item.discountValueAmount !== undefined) {
+                                  itemDiscount = Math.min(originalItemTotal, item.discountValueAmount);
+                                } else {
+                                  itemDiscount = originalItemTotal * (item.discountPercent / 100);
+                                }
+                                const cleanItemTotal = originalItemTotal - itemDiscount;
+
+                                return (
+                                  <tr key={item.product.id} className="hover:bg-slate-900/40 transition-colors">
+                                    <td className="p-2.5">
+                                      <span className="font-extrabold text-slate-200 block">{item.product.name}</span>
+                                      {item.discountPercent > 0 && (
+                                        <span className="text-[9px] text-emerald-400 font-black">
+                                          🏷️ Desconto de {item.discountPercent}% concedido neste item.
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="p-2.5 text-center font-mono font-bold text-white">
+                                      {item.quantity} {item.product.unit}
+                                    </td>
+                                    <td className="p-2.5 text-right font-mono text-slate-400">
+                                      R$ {item.product.sellingPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="p-2.5 text-right font-mono text-emerald-400 font-extrabold">
+                                      R$ {cleanItemTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-850/50 space-y-1.5 text-[10px] text-slate-405 leading-none">
-                        <div className="flex justify-between">
-                          <span>Provisão ICMS (18%):</span>
-                          <span className="font-mono">R$ {cartTotals.taxes.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      {/* PAYMENT OPTIONS REVIEW */}
+                      <div className="bg-slate-950/40 p-5 rounded-2xl border border-slate-850 space-y-4">
+                        <div className="flex items-center space-x-2 text-slate-350 border-b border-slate-850 pb-2.5">
+                          <CreditCard className="h-4 w-4 text-sky-455" />
+                          <h5 className="text-[10.5px] uppercase font-black tracking-wider text-slate-205">Forma & Condição de Pagamento</h5>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Provisão IPI (5%):</span>
-                          <span className="font-mono">R$ {cartTotals.taxes.ipi.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                        <div className="flex justify-between font-bold">
-                          <span>Estimado Impostos Integrados:</span>
-                          <span className="font-mono text-slate-350">R$ {cartTotals.taxes.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+
+                        <div className="flex flex-col sm:flex-row gap-4">
+                          <div className="flex-1 bg-slate-900 duration-200 border border-slate-800 p-4 rounded-xl flex items-center space-x-3">
+                            <span className="text-xl">💳</span>
+                            <div>
+                              <span className="text-[9.5px] uppercase font-bold text-slate-400 block">Forma Definida</span>
+                              <strong className="text-white text-xs font-black uppercase tracking-wider">{paymentMethod}</strong>
+                            </div>
+                          </div>
+                          
+                          {paymentMethod === 'Boleto' ? (
+                            <div className="flex-1 bg-slate-900 duration-200 border border-slate-800 p-4 rounded-xl flex items-center space-x-3">
+                              <span className="text-xl">📅</span>
+                              <div>
+                                <span className="text-[9.5px] uppercase font-bold text-slate-400 block">Prazo de Cobrança</span>
+                                <strong className="text-emerald-400 text-xs font-black">{paymentTerm}</strong>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex-1 bg-slate-900 duration-200 border border-slate-800 p-4 rounded-xl flex items-center space-x-3">
+                              <span className="text-xl">⚡</span>
+                              <div>
+                                <span className="text-[9.5px] uppercase font-bold text-slate-400 block">Compensação de Cobrança</span>
+                                <strong className="text-slate-300 text-xs font-black">À Vista / Imediata</strong>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      <div className="pt-3.5 border-t border-slate-800 flex justify-between items-center">
-                        <strong className="text-xs uppercase text-white font-black tracking-wider">Valor Líquido Faturado:</strong>
-                        <strong className="text-base text-emerald-400 font-extrabold font-mono">
-                          R$ {cartTotals.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </strong>
-                      </div>
                     </div>
 
-                  </div>
+                    {/* Right Hand Column (Financial Review & Confirm button) */}
+                    <div className="space-y-5">
+                      
+                      {/* RESUMO FINANCEIRO */}
+                      <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800/80 space-y-4 shadow-xl">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-slate-400 block pb-2.5 border-b border-slate-800">
+                          Resumo Financeiro Consolidado
+                        </span>
 
-                  {/* Warning on limits and margins */}
-                  <div className="bg-slate-950/30 p-3.5 rounded-lg border border-slate-850 flex items-start space-x-2 text-[10px] text-slate-400">
-                    <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
-                    <span>Conclusão segura. Os limites fiscais de venda foram auditados. Atribuir desconto médio de {( (cartTotals.discountTotal / (cartTotals.subtotal || 1)) * 100).toFixed(1)}% nesta comanda.</span>
-                  </div>
+                        <div className="space-y-3.5 text-xs">
+                          <div className="flex justify-between text-slate-400">
+                            <span>Subtotal Bruto:</span>
+                            <span className="font-mono text-slate-205 font-bold">
+                              R$ {cartTotals.subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
 
-                  <div className="pt-4 border-t border-slate-800/80 flex justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setWizardStep(3)}
-                      className="flex items-center space-x-1 bg-slate-800 hover:bg-slate-700 text-slate-200 px-5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer"
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      <span>Voltar aos Cálculos</span>
-                    </button>
-                    
-                    <button
-                      type="button"
-                      onClick={handleConfirmOrder}
-                      className="flex items-center space-x-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-6 py-3 rounded-xl text-xs font-black transition-all transform scale-100 hover:scale-102 active:scale-97 cursor-pointer uppercase shadow-lg shadow-emerald-500/10"
-                    >
-                      <Check className="h-4.5 w-4.5" />
-                      <span>Sincronizar & Confirmar Venda</span>
-                    </button>
+                          <div className="flex justify-between text-rose-450">
+                            <span>Total Desconto:</span>
+                            <span className="font-mono font-bold">
+                              - R$ {cartTotals.discountTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-850/50 space-y-2 text-[10px] text-slate-405 leading-none">
+                            <div className="flex justify-between">
+                              <span>Provisão ICMS (18%):</span>
+                              <span className="font-mono">R$ {cartTotals.taxes.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Provisão IPI (5%):</span>
+                              <span className="font-mono">R$ {cartTotals.taxes.ipi.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex justify-between font-bold">
+                              <span>Estimado Impostos Integrados:</span>
+                              <span className="font-mono text-slate-355">R$ {cartTotals.taxes.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          </div>
+
+                          <div className="pt-3.5 border-t border-slate-800 flex justify-between items-center bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-inner">
+                            <strong className="text-[11px] uppercase text-white font-bold tracking-wider">Líquido Final:</strong>
+                            <strong className="text-lg text-emerald-400 font-extrabold font-mono leading-none">
+                              R$ {cartTotals.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* CONFIRMAÇÃO DE DESCONTO */}
+                      {cartTotals.discountTotal > 0 && (
+                        <div className="bg-amber-500/10 border border-amber-500/20 p-4.5 rounded-2xl text-xs space-y-2.5">
+                          <div className="flex items-center space-x-2 text-amber-500">
+                            <AlertTriangle className="h-4.5 w-4.5 shrink-0" />
+                            <strong className="uppercase font-black text-[10px] tracking-wider">Aviso de Bonificação Ativa</strong>
+                          </div>
+
+                          <p className="text-[11.5px] text-slate-300 leading-normal">
+                            ⚠️ Desconto médio aplicado: <strong className="text-amber-400 font-extrabold">{Math.round((cartTotals.discountTotal / (cartTotals.subtotal || 1)) * 100)}%</strong>
+                          </p>
+
+                          <div className="text-[10px] text-slate-400 space-y-1 bg-slate-950/40 p-2.5 rounded-lg border border-slate-850/50 font-semibold font-mono">
+                            <div className="flex justify-between">
+                              <span>Valor original:</span>
+                              <span>R$ {cartTotals.subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex justify-between text-emerald-400">
+                              <span>Valor final:</span>
+                              <span className="font-extrabold">R$ {cartTotals.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex justify-between text-amber-400">
+                              <span>Economia concedida:</span>
+                              <span className="font-extrabold">R$ {cartTotals.discountTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* FINAL CONFIRMATION BLOCK */}
+                      <div className="bg-slate-950/70 p-5 rounded-2xl border border-sky-500/25 space-y-4 shadow-2xl relative overflow-hidden">
+                        
+                        <div className="space-y-1.5 relative z-10">
+                          <span className="text-[9px] uppercase font-black tracking-widest text-sky-400 font-mono block">AVALIAÇÃO DE CREDIBILIDADE</span>
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Confirmar Pedido?</h4>
+                          <p className="text-[10px] text-slate-450 leading-normal">Faturamentos de estoque e crédito do cliente serão validados na mesa nacional.</p>
+                        </div>
+
+                        <div className="flex space-x-2.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setWizardStep(3)}
+                            className="flex-1 py-3 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-350 hover:text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer text-center"
+                          >
+                            Voltar
+                          </button>
+                          
+                          <button
+                            type="button"
+                            onClick={handleConfirmOrder}
+                            className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-450 text-slate-950 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-550/15 cursor-pointer text-center flex items-center justify-center space-x-1.5"
+                          >
+                            <Check className="h-4.5 w-4.5" />
+                            <span>Confirmar</span>
+                          </button>
+                        </div>
+                      </div>
+
+                    </div>
+
                   </div>
 
                 </div>
@@ -1171,23 +1851,83 @@ export default function SalesPortal({
                   <FileText className="h-4.5 w-4.5 text-emerald-400" />
                   <div>
                     <h3 className="text-sm font-black tracking-tight uppercase">Nota de Venda Profissional</h3>
-                    <p className="text-[10px] text-slate-450 uppercase font-black tracking-wider leading-none mt-0.5">Vértice Distribuidora S.A.</p>
+                    <p className="text-[10px] text-slate-450 uppercase font-bold tracking-wider leading-none mt-0.5">14.571.417 Cristiane Aparecida Gonçalves</p>
                   </div>
                 </div>
 
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => window.print()}
-                    className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-800 text-slate-350 hover:text-white transition-colors cursor-pointer text-[10px] font-black uppercase tracking-wider border border-slate-700/50"
                     title="Imprimir Cupom Auxiliar"
                   >
-                    <Printer className="h-4 w-4" />
+                    <Printer className="h-3.5 w-3.5" />
+                    <span className="hidden md:inline">Imprimir</span>
                   </button>
+
+                   <button
+                    onClick={async () => {
+                      if (!focusOrder) return;
+                      setIsGeneratingPDF(true);
+                      try {
+                        if (focusOrder.pdfUrl && focusOrder.pdfUrl.startsWith('data:application/pdf')) {
+                          const link = document.createElement('a');
+                          link.href = focusOrder.pdfUrl;
+                          link.download = `WAGON-PEDIDO-${focusOrder.id}.pdf`;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        } else {
+                          const doc = await generateInvoicePDF(focusOrder, clients, products, { isDownload: false });
+                          const dataUri = doc.output('datauristring');
+                          
+                          // Cache PDF data
+                          focusOrder.pdfUrl = dataUri;
+                          const cachedOrders = localStorage.getItem('vertice_erp_orders');
+                          if (cachedOrders) {
+                            const allOrders: Order[] = JSON.parse(cachedOrders);
+                            const index = allOrders.findIndex(o => o.id === focusOrder.id);
+                            if (index !== -1) {
+                              allOrders[index].pdfUrl = dataUri;
+                              localStorage.setItem('vertice_erp_orders', JSON.stringify(allOrders));
+                            }
+                          }
+
+                          const link = document.createElement('a');
+                          link.href = dataUri;
+                          link.download = `WAGON-PEDIDO-${focusOrder.id}.pdf`;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }
+                      } catch (err) {
+                        console.error('[PDF Generation Error]', err);
+                      } finally {
+                        setIsGeneratingPDF(false);
+                      }
+                    }}
+                    disabled={isGeneratingPDF}
+                    className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-800 text-slate-350 hover:text-white transition-colors cursor-pointer text-[10px] font-black uppercase tracking-wider border border-slate-700/50 disabled:opacity-50"
+                    title="Gerar e Baixar PDF"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="hidden md:inline">{isGeneratingPDF ? 'Baixando...' : 'Baixar PDF'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => focusOrder && handleSharePDF(focusOrder)}
+                    className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-800 text-slate-350 hover:text-white transition-colors cursor-pointer text-[10px] font-black uppercase tracking-wider border border-slate-700/50"
+                    title="Compartilhar Nota"
+                  >
+                    <Share2 className="h-3.5 w-3.5 text-sky-400" />
+                    <span className="hidden md:inline">Compartilhar</span>
+                  </button>
+
                   <button
                     onClick={() => setFocusOrder(null)}
-                    className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    className="p-2 rounded-xl bg-slate-800 text-slate-350 hover:text-white transition-colors cursor-pointer border border-slate-700/50"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-3.5 w-3.5 text-rose-400" />
                   </button>
                 </div>
               </div>
@@ -1206,9 +1946,9 @@ export default function SalesPortal({
                   </div>
 
                   <div className="text-left sm:text-right text-[10.5px] text-slate-500 font-medium">
-                    <strong className="text-slate-800 font-extrabold uppercase">Vértice Distribuidora S.A.</strong>
-                    <p className="mt-0.5">CNPJ: 14.556.882/0001-90</p>
-                    <p>Sorocaba/SP - Tel: (15) 3211-5050</p>
+                    <strong className="text-slate-800 font-bold uppercase">14.571.417 Cristiane Aparecida Gonçalves</strong>
+                    <p className="mt-0.5">CNPJ: <span className="font-mono font-bold">14.571.417/0001-19</span></p>
+                    <p>IE: <span className="font-mono font-bold">001867602.00-43</span> | Status: <span className="text-emerald-600 font-black">ATIVA</span></p>
                   </div>
                 </div>
 
@@ -1315,7 +2055,7 @@ export default function SalesPortal({
                       <strong className="text-slate-800 uppercase tracking-widest font-black text-[9px] block">Comprovante Eletrônico</strong>
                       <p>Código autenticador de conformidade tributária.</p>
                       <span className="font-mono text-[8.5px] bg-slate-200/60 text-slate-600 px-1.5 py-0.5 rounded truncate block mt-1">
-                        Selo: SEFIP-A882-VRT
+                        Selo: Simples Nacional (MEI)
                       </span>
                     </div>
                   </div>
@@ -1351,8 +2091,9 @@ export default function SalesPortal({
 
                 {/* Footer disclaimer disclaimer */}
                 <div className="border-t border-slate-150 pt-4 text-center text-[9px] text-slate-400 leading-normal space-y-1">
-                  <p>Este documento autentica a entrega de mercadorias registradas sob a responsabilidade do operador de faturamento.</p>
-                  <p className="font-mono">Chave de Acesso: 1526 8820 4410 0980 1522 9901 0288 #441A9</p>
+                  <p>Documento emitido através da plataforma Wagon AI.</p>
+                  <p>Emitente: <strong>14.571.417 Cristiane Aparecida Gonçalves</strong> | CNPJ: <strong>14.571.417/0001-19</strong></p>
+                  <p className="font-mono">Chave de Emissão Autorizada: 1526 8820 4410 0980 1522 9901 0288 #441A9</p>
                 </div>
 
               </div>
@@ -1369,6 +2110,307 @@ export default function SalesPortal({
 
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* PREMIUM CLIENT REGISTRATION MODAL */}
+      <AnimatePresence>
+        {isClientModalOpen && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden font-sans"
+            >
+              {/* Header */}
+              <div className="bg-slate-950/60 p-6 border-b border-slate-800/80 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 bg-sky-500/10 text-sky-400 rounded-xl border border-sky-500/20 shadow-inner">
+                    <Plus className="h-5.5 w-5.5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white uppercase tracking-wider">Cadastrar Novo Cliente</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">Vendedor Atribuído: <span className="text-emerald-400 font-black">{currentSeller?.name}</span></p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsClientModalOpen(false)}
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="h-4.5 w-4.5" />
+                </button>
+              </div>
+
+              {/* Body Form */}
+              <form onSubmit={handleSaveClient} className="p-6 space-y-4">
+                
+                {clientSuccessMessage ? (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-6 rounded-2xl text-center space-y-3"
+                  >
+                    <div className="w-12 h-12 bg-emerald-500 text-slate-950 rounded-full flex items-center justify-center mx-auto text-xl font-black">
+                      ✓
+                    </div>
+                    <p className="text-xs font-extrabold leading-relaxed">{clientSuccessMessage}</p>
+                  </motion.div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      
+                      {/* Nome do Negócio */}
+                      <div className="space-y-1.5 col-span-1 md:col-span-2">
+                        <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Nome do Negócio *</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ex: Comercial Wagon S.A."
+                          value={businessName}
+                          onChange={(e) => setBusinessName(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-sky-500 focus:outline-none placeholder-slate-600 font-bold"
+                        />
+                      </div>
+
+                      {/* CNPJ */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">CNPJ *</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="00.000.000/0001-00"
+                          value={cnpjInput}
+                          onChange={handleCnpjChange}
+                          maxLength={18}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-sky-500 focus:outline-none placeholder-slate-600 font-mono font-bold"
+                        />
+                      </div>
+
+                      {/* Proprietário */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Proprietário / Responsável</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Carlos de Souza"
+                          value={ownerInput}
+                          onChange={(e) => setOwnerInput(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-sky-500 focus:outline-none placeholder-slate-600 font-bold"
+                        />
+                      </div>
+
+                      {/* Telefone */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Telefone / WhatsApp</label>
+                        <input
+                          type="text"
+                          placeholder="(15) 99881-2233"
+                          value={phoneInput}
+                          onChange={handlePhoneChange}
+                          maxLength={15}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-sky-500 focus:outline-none placeholder-slate-600 font-mono font-bold"
+                        />
+                      </div>
+
+                      {/* Cidade */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Cidade</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Sorocaba"
+                          value={cityInput}
+                          onChange={(e) => setCityInput(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-sky-500 focus:outline-none placeholder-slate-600 font-bold"
+                        />
+                      </div>
+
+                      {/* Endereço */}
+                      <div className="space-y-1.5 col-span-1 md:col-span-2">
+                        <label className="text-[10px] uppercase font-black tracking-wider text-slate-450">Endereço Completo</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Av. Paulistano, 1420 - Sala 3"
+                          value={addressInput}
+                          onChange={(e) => setAddressInput(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-sky-500 focus:outline-none placeholder-slate-600 font-bold"
+                        />
+                      </div>
+
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-850 flex space-x-3">
+                      <button
+                        type="button"
+                        onClick={() => setIsClientModalOpen(false)}
+                        className="flex-1 py-3 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer text-center"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingClient}
+                        className="flex-1 py-3 bg-sky-500 hover:bg-sky-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer text-center flex items-center justify-center space-x-2"
+                      >
+                        {isSavingClient ? (
+                          <span>Aguarde...</span>
+                        ) : (
+                          <>
+                            <Plus className="h-4.5 w-4.5" />
+                            <span>Confirmar Cadastro</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* FALLBACK SHARE MODAL */}
+      <AnimatePresence>
+        {isShareModalOpen && shareOrder && (
+          <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-55 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-6 font-sans text-slate-100"
+            >
+              {/* Header */}
+              <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+                <div className="flex items-center space-x-2 text-sky-400">
+                  <Share2 className="h-4.5 w-4.5" />
+                  <h3 className="text-sm font-black uppercase tracking-wider">Compartilhar Pedido</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsShareModalOpen(false)}
+                  className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Order Info Preview */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-850 space-y-2 text-xs">
+                <p className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Resumo do Compartilhamento</p>
+                <div className="space-y-1 font-bold">
+                  <p className="text-white">Pedido: <span className="text-sky-400">{shareOrder.id}</span></p>
+                  <p className="text-slate-300">Cliente: <span className="text-slate-100">{shareOrder.clientName}</span></p>
+                  <p className="text-slate-305 font-mono">Total: <span className="text-emerald-400 font-extrabold">R$ {shareOrder.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></p>
+                </div>
+              </div>
+
+              {/* Interactive Actions Grid */}
+              <div className="space-y-4">
+                
+                {/* Copy Link Row */}
+                <div className="space-y-1.5">
+                  <label className="text-[9px] uppercase font-black text-slate-400 tracking-wider">Link Público de Validação</label>
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={`https://app.wagon.ai/pedido/${shareOrder.id}`}
+                      className="flex-1 bg-slate-950 border border-slate-850 rounded-xl px-3 py-2.5 text-xs text-sky-305 font-mono select-all focus:outline-none focus:border-slate-700"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`https://app.wagon.ai/pedido/${shareOrder.id}`);
+                        setCopiedText(true);
+                        setTimeout(() => setCopiedText(false), 200);
+                      }}
+                      className="px-4 py-2.5 bg-sky-500 hover:bg-sky-400 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wide transition-colors cursor-pointer flex items-center space-x-1"
+                    >
+                      {copiedText ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      <span>{copiedText ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Grid layout for channels */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  
+                  {/* Whatsapp */}
+                  <a
+                    href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
+                      `Pedido *${shareOrder.id}*\nCliente: *${shareOrder.clientName}*\nValor: *R$ ${shareOrder.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}*\n\nValide seu comprovante online:\nhttps://app.wagon.ai/pedido/${shareOrder.id}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center space-x-2 p-3 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
+                  >
+                    <Send className="h-4 w-4" />
+                    <span>WhatsApp</span>
+                  </a>
+
+                  {/* Email */}
+                  <a
+                    href={`mailto:?subject=Pedido ${shareOrder.id} - Wagon AI&body=${encodeURIComponent(
+                      `Olá,\n\nGeramos o comprovante auxiliar digitizado do seu pedido, com total segurança e autenticidade eletrônica.\n\nNúmero: ${shareOrder.id}\nCliente: ${shareOrder.clientName}\nValor: R$ ${shareOrder.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\nPara visualizar os detalhes e baixar o arquivo PDF homologado, acesse o link de validação pública:\nhttps://app.wagon.ai/pedido/${shareOrder.id}\n\nEmitido via Wagon AI Integrada.`
+                    )}`}
+                    className="flex items-center justify-center space-x-2 p-3 bg-[#1F3767]/20 hover:bg-[#1E94CF]/20 text-[#1E94CF] border border-[#1E94CF]/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
+                  >
+                    <Mail className="h-4 w-4" />
+                    <span>E-mail</span>
+                  </a>
+
+                </div>
+
+                {/* Direct PDF Downloader Button */}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsGeneratingPDF(true);
+                    try {
+                      await generateInvoicePDF(shareOrder, clients, products, { isDownload: true });
+                    } catch (err) {
+                      console.error('[Fallback Modal PDF Generation Error]', err);
+                    } finally {
+                      setIsGeneratingPDF(false);
+                    }
+                  }}
+                  disabled={isGeneratingPDF}
+                  className="w-full py-3 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center space-x-2"
+                >
+                  <Download className="h-4 w-4 text-emerald-400" />
+                  <span>{isGeneratingPDF ? 'Gerando Notas...' : 'Baixar Nota em PDF'}</span>
+                </button>
+
+              </div>
+              
+              {/* Footer */}
+              <div className="text-center text-[9px] text-slate-500 border-t border-slate-800 pt-3">
+                Selo de validação: SEFIP-A882-VRT. Criptografia homologada.
+              </div>
+
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modern floating button to scroll to top */}
+      <AnimatePresence>
+        {showScrollTop && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: 15, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 15, scale: 0.8 }}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={scrollToTop}
+            className="absolute bottom-6 right-6 z-40 bg-emerald-500 hover:bg-emerald-400 text-slate-950 p-3 rounded-full shadow-2xl shadow-emerald-500/30 active:scale-95 transition-all flex items-center justify-center cursor-pointer border border-emerald-400/20"
+            title="Voltar ao topo"
+          >
+            <ArrowUp className="h-5 w-5 stroke-[2.5]" />
+          </motion.button>
         )}
       </AnimatePresence>
 

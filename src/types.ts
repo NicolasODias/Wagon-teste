@@ -38,6 +38,9 @@ export interface Client {
   salesRep?: string;
   status?: 'Ativo' | 'Inativo';
   consignments?: string[];
+  codigo_cliente?: string;
+  endereco?: string;
+  vendedor_id?: string;
 }
 
 export interface OrderItem {
@@ -51,6 +54,8 @@ export interface OrderItem {
 
 export interface Order {
   id: string;
+  uuid?: string;
+  pdfUrl?: string;
   clientId: string;
   clientName: string;
   date: string;
@@ -64,8 +69,9 @@ export interface Order {
   };
   total: number;
   marginPercent: number; // calculated margin
-  status: 'Aguardando Faturamento' | 'Em Separação' | 'Rota de Entrega' | 'Entregue';
+  status: 'Aguardando Faturamento' | 'Em Separação' | 'Rota de Entrega' | 'Entregue' | 'Cancelado';
   paymentTerm: 'Vista' | '7 Dias' | '15 Dias' | '30 Dias' | '45 Dias';
+  paymentMethod?: string;
   invoiceNumber?: string;
   salesRep?: string;
 }
@@ -80,7 +86,8 @@ export interface FinancialRecord {
   status: 'Pendente' | 'Pago' | 'Atrasado';
   partyName: string; // client or supplier
   cnpj?: string;
-  category: 'Vendas' | 'Logística' | 'Impostos' | 'Folha Pgto' | 'Infraestrutura' | 'Fornecedores' | 'Compra de Mercadoria' | 'Frete' | 'Salários' | 'Comissões' | 'Outros';
+  category: 'Vendas' | 'Logística' | 'Impostos' | 'Folha Pgto' | 'Infraestrutura' | 'Fornecedores' | 'Compra de Mercadoria' | 'Frete' | 'Salários' | 'Comissões' | 'Marketing' | 'Energia' | 'Água' | 'Internet' | 'Aluguel' | 'Equipamentos' | 'Serviços' | 'Outros';
+  paymentMethod?: string;
 }
 
 export interface BIInsight {
@@ -106,5 +113,29 @@ export interface AuthUser {
   email: string;
   role: 'ADMIN' | 'VENDEDOR';
   permissions: string[];
+  telefone?: string;
+}
+
+export interface StockMovement {
+  id: string;
+  produto_id: string;
+  produto_nome?: string;
+  produto_sku?: string;
+  tipo: 'ENTRADA' | 'SAIDA' | 'AJUSTE';
+  quantidade: number;
+  valor: number;
+  observacao?: string;
+  created_at: string;
+}
+
+export interface Commission {
+  id: string;
+  pedido_id: string;
+  vendedor_id: string;
+  valor: number;
+  status: 'PENDENTE' | 'PARCIAL' | 'PAGO';
+  data_pagamento?: string;
+  observacao?: string;
+  created_at?: string;
 }
 

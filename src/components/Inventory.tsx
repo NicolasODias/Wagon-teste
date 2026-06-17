@@ -34,12 +34,13 @@ import {
    Settings,
    History
  } from 'lucide-react';
-import { Product, FinancialRecord } from '../types';
+import { Product, FinancialRecord, StockMovement } from '../types';
 
 interface InventoryProps {
   products: Product[];
+  stockMovements?: StockMovement[];
   onUpdateProduct: (updatedProduct: Product) => void;
-  onReceiveStock: (productId: string, qtyToAdd: number) => void;
+  onReceiveStock: (productId: string, qtyToAdd: number, observation?: string, unitValue?: number) => void;
   onAddProduct: (newProduct: Product) => void;
   onAddTransaction?: (record: FinancialRecord) => void;
   isDark?: boolean;
@@ -47,6 +48,7 @@ interface InventoryProps {
 
 export default function Inventory({ 
   products, 
+  stockMovements = [],
   onUpdateProduct, 
   onReceiveStock,
   onAddProduct,
@@ -58,6 +60,9 @@ export default function Inventory({
   const [selectedProductId, setSelectedProductId] = useState<string | null>(products[0]?.id || null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [activeDetailsTab, setActiveDetailsTab] = useState<'info' | 'editar' | 'lancar_entrada' | 'historico'>('info');
+  const [activeInventoryTab, setActiveInventoryTab] = useState<'catalog' | 'audit_log'>('catalog');
+  const [auditSearchQuery, setAuditSearchQuery] = useState('');
+  const [auditTypeFilter, setAuditTypeFilter] = useState<'ALL' | 'ENTRADA' | 'SAIDA' | 'AJUSTE'>('ALL');
 
   // Launch Stock Entry form states
   const [launchQty, setLaunchQty] = useState<number>(50);
@@ -585,7 +590,35 @@ export default function Inventory({
 
       </div>
 
-      {/* CRITICAL STOCK VISUAL ALERTS BANNER BAR */}
+      {/* SELETOR DE ABAS LOGÍSTICAS */}
+      <div className="flex border-b border-slate-200/60 pb-px gap-6 mb-1">
+        <button
+          type="button"
+          onClick={() => setActiveInventoryTab('catalog')}
+          className={`pb-3 text-sm font-black transition-all border-b-2 text-nowrap cursor-pointer active:scale-95 ${
+            activeInventoryTab === 'catalog'
+              ? 'border-[#1E94CF] text-[#1E94CF]'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Catálogo Geral de SKUs ({products.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveInventoryTab('audit_log')}
+          className={`pb-3 text-sm font-black transition-all border-b-2 text-nowrap cursor-pointer active:scale-95 ${
+            activeInventoryTab === 'audit_log'
+              ? 'border-[#1E94CF] text-[#1E94CF]'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Histórico Geral de Movimentações ({stockMovements?.length || 0})
+        </button>
+      </div>
+
+      {activeInventoryTab === 'catalog' ? (
+        <>
+          {/* CRITICAL STOCK VISUAL ALERTS BANNER BAR */}
       {(produtosEstoqueBaixoCount > 0 || produtosZeradosCount > 0) && (
         <div id="critical-warnings-banner" className="bg-amber-50 text-amber-850 p-4 rounded-2xl border border-amber-200/60 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3 animate-fade-in text-xs leading-normal">
           <div className="flex items-start space-x-3">
@@ -827,12 +860,157 @@ export default function Inventory({
       <div id="inventory-compliance-info" className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 text-[11px] text-slate-500 font-semibold leading-normal flex items-start space-x-3.5">
         <Info className="h-5 w-5 text-[#1E94CF] shrink-0 mt-0.5" />
         <div className="space-y-1">
-          <p className="text-slate-750 font-black leading-none">Mecanismo Integrado Antirruptura ERP Vértice</p>
+          <p className="text-slate-750 font-black leading-none">Mecanismo Integrado Antirruptura Wagon AI</p>
           <p className="text-slate-450 text-[10px] font-medium leading-relaxed">
             As alterações de preços de venda propagam-se instantaneamente para novos pedidos do CRM Comercial, bem como o indicador analítico de controladoria. A comissão é rateada proporcionalmente ao percentual estipulado neste módulo. Garantido pelo Oráculo de Auditoria de Custos do Balanço.
           </p>
         </div>
       </div>
+        </>
+      ) : (() => {
+        const filteredAuditLogs = (stockMovements || []).filter(item => {
+          const matchesQuery = 
+            (item.produto_nome || '').toLowerCase().includes(auditSearchQuery.toLowerCase()) ||
+            (item.produto_sku || '').toLowerCase().includes(auditSearchQuery.toLowerCase()) ||
+            (item.observacao || '').toLowerCase().includes(auditSearchQuery.toLowerCase());
+          
+          const matchesType = auditTypeFilter === 'ALL' || item.tipo === auditTypeFilter;
+          return matchesQuery && matchesType;
+        });
+
+        return (
+          <div id="inventory-audit-log-view" className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-6 space-y-6 animate-fade-in text-slate-800">
+            {/* HEADER AND CONTROLS */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <span className="text-[10px] font-black text-[#1E94CF] uppercase tracking-wider block">Logística & Rastreabilidade</span>
+                <h3 className="text-base font-black text-[#1F3767]">Registro Histórico de Auditoria Geral</h3>
+                <p className="text-[11px] text-slate-400 font-semibold mt-1">
+                  Todas as entradas, baixas automáticas de vendas, e ajustes manuais de estoque em tempo real.
+                </p>
+              </div>
+
+              {/* Type buttons */}
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl w-max">
+                {(['ALL', 'ENTRADA', 'SAIDA', 'AJUSTE'] as const).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setAuditTypeFilter(type)}
+                    className={`px-3 py-1.5 text-[10px] font-black rounded-lg transition-all cursor-pointer ${
+                      auditTypeFilter === type
+                        ? 'bg-white text-slate-800 shadow-3xs'
+                        : 'text-slate-450 hover:text-slate-700'
+                    }`}
+                  >
+                    {type === 'ALL' ? 'TUDO' : type === 'SAIDA' ? 'SAÍDA' : type}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* FILTER SEARCH BAR */}
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Pesquisar por SKU, Código, Tipo ou Observação..."
+                value={auditSearchQuery}
+                onChange={(e) => setAuditSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs font-semibold focus:outline-none focus:border-[#1E94CF] focus:bg-white transition-all text-slate-700"
+              />
+            </div>
+
+            {/* TABLE OF REGISTERS */}
+            <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+              <table className="w-full text-left text-xs font-semibold text-slate-650">
+                <thead className="bg-slate-50 text-slate-450 text-[10px] uppercase font-black tracking-wider border-b border-slate-150">
+                  <tr>
+                    <th className="p-4">SKU / CÓDIGO</th>
+                    <th className="p-4">PRODUTO</th>
+                    <th className="p-4">TIPO DE TRANSAÇÃO</th>
+                    <th className="p-4 text-right">QUANTIDADE</th>
+                    <th className="p-4 text-right">VALOR REF.</th>
+                    <th className="p-4">DATA & HORA REGISTRO</th>
+                    <th className="p-4">OBSERVAÇÃO DA OPERAÇÃO</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredAuditLogs.length > 0 ? (
+                    filteredAuditLogs.map((item) => {
+                      const isEntrada = item.tipo === 'ENTRADA';
+                      const isSaida = item.tipo === 'SAIDA';
+                      
+                      return (
+                        <tr key={item.id} className="hover:bg-slate-50/50 transition-all">
+                          <td className="p-4 font-mono font-black text-slate-800">
+                            {item.produto_sku || 'PROD-N/A'}
+                          </td>
+                          <td className="p-4 font-black text-[#1F3767]">
+                            {item.produto_nome || 'Produto Desconhecido'}
+                          </td>
+                          <td className="p-4">
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                              isEntrada ? 'bg-emerald-50 text-emerald-600 font-extrabold' :
+                              isSaida ? 'bg-rose-50 text-rose-550 font-extrabold' :
+                              'bg-amber-50 text-amber-600 font-extrabold'
+                            }`}>
+                              {item.tipo}
+                            </span>
+                          </td>
+                          <td className={`p-4 text-right font-black ${
+                            isEntrada ? 'text-emerald-500' : isSaida ? 'text-rose-500' : 'text-amber-500'
+                          }`}>
+                            {isEntrada ? '+' : isSaida ? '-' : ''}{item.quantidade} un
+                          </td>
+                          <td className="p-4 text-right font-mono text-slate-500 font-normal">
+                            R$ {item.valor ? item.valor.toFixed(2) : '0.00'}
+                          </td>
+                          <td className="p-4 text-slate-450 text-[11px] font-medium font-sans">
+                            {item.created_at ? item.created_at.substring(0, 16).replace('T', ' ') : 'Agendado'}
+                          </td>
+                          <td className="p-4 text-slate-500 font-medium italic text-[11px] max-w-xs truncate">
+                            {item.observacao || 'Sem anotações de auditoria'}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="p-12 text-center text-slate-400">
+                        <Boxes className="h-8 w-8 mx-auto text-slate-300 opacity-65 mb-2 animate-bounce" />
+                        <p className="text-xs">Nenhuma movimentação de estoque encontrada para os filtros atuais.</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* SUMMARY STATISTICS */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <div className="space-y-0.5">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Aportes (ENTRADAS)</span>
+                <p className="text-sm font-black text-emerald-500 font-sans">
+                  +{filteredAuditLogs.filter(m => m.tipo === 'ENTRADA').reduce((a, b) => a + b.quantidade, 0)} unidades
+                </p>
+              </div>
+              <div className="space-y-0.5 border-t md:border-t-0 md:border-x border-slate-200 md:px-6 pt-2 md:pt-0">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Faturamentos (SAÍDAS)</span>
+                <p className="text-sm font-black text-rose-500 font-sans">
+                  -{filteredAuditLogs.filter(m => m.tipo === 'SAIDA').reduce((a, b) => a + b.quantidade, 0)} unidades
+                </p>
+              </div>
+              <div className="space-y-0.5 pt-2 md:pt-0">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Ajustes manuais</span>
+                <p className="text-sm font-black text-amber-500 font-sans">
+                  {filteredAuditLogs.filter(m => m.tipo === 'AJUSTE').length} operações de balanço
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* DETAILED PRODUCT WORKSPACE MODAL (On Product SKU Click) */}
       {isDetailsModalOpen && selectedProduct && (
@@ -945,21 +1123,21 @@ export default function Inventory({
                 <div className="space-y-4 animate-fade-in">
                   
                   {/* Cards de Métricas Principais */}
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between">
-                      <span className="text-[10px] uppercase font-black text-slate-450 tracking-wider">Saldo Físico</span>
-                      <span className={`text-2xl font-black mt-2 leading-none ${
+                      <span className="text-[10px] uppercase font-black text-slate-450 tracking-wider font-mono">Saldo Físico</span>
+                      <span className={`text-xl font-black mt-2 leading-none ${
                         selectedProduct.stock === 0 ? 'text-rose-500' :
                         selectedProduct.stock <= selectedProduct.minStock ? 'text-amber-500' : 'text-brand-green'
                       }`}>
                         {selectedProduct.stock} <span className="text-xs font-normal text-slate-400">({selectedProduct.unit})</span>
                       </span>
-                      <span className="text-[9px] text-slate-400 font-bold mt-1.5">Mínimo cadastrado: {selectedProduct.minStock} un</span>
+                      <span className="text-[9px] text-slate-400 font-bold mt-1.5">Mínimo: {selectedProduct.minStock} un</span>
                     </div>
 
                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between">
-                      <span className="text-[10px] uppercase font-black text-slate-450 tracking-wider">Preço Comercial</span>
-                      <span className="text-2xl font-black text-[#1F3767] mt-2 leading-none font-mono">
+                      <span className="text-[10px] uppercase font-black text-slate-450 tracking-wider font-mono">Preço Comercial</span>
+                      <span className="text-xl font-black text-[#1F3767] mt-2 leading-none font-mono">
                         R$ {selectedProduct.sellingPrice.toFixed(2)}
                       </span>
                       <span className="text-[9px] text-slate-400 font-bold mt-1.5 flex justify-between pr-1">
@@ -969,12 +1147,12 @@ export default function Inventory({
                     </div>
 
                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between">
-                      <span className="text-[10px] uppercase font-black text-slate-450 tracking-wider">Comissionamento</span>
-                      <span className="text-2xl font-black text-purple-600 mt-2 leading-none font-mono">
+                      <span className="text-[10px] uppercase font-black text-slate-450 tracking-wider font-mono">Comissionamento</span>
+                      <span className="text-xl font-black text-purple-600 mt-2 leading-none font-mono">
                         {selectedProduct.commissionPercent || 2.5}%
                       </span>
                       <span className="text-[9px] text-slate-400 font-bold mt-1.5">
-                        Equivale a R$ {getCalculatedCommissionValue(selectedProduct.sellingPrice, selectedProduct.commissionPercent || 2.5).toFixed(2)} / un
+                        Vol: R$ {getCalculatedCommissionValue(selectedProduct.sellingPrice, selectedProduct.commissionPercent || 2.5).toFixed(2)}
                       </span>
                     </div>
                   </div>
@@ -983,7 +1161,7 @@ export default function Inventory({
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4.5 space-y-3.5">
                     <h4 className="text-xs uppercase font-extrabold text-[#1F3767] tracking-wider border-b border-slate-100 pb-2">Informações de Localização & Impostos</h4>
                     
-                    <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-xs text-slate-600 font-semibold">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6 text-xs text-slate-600 font-semibold">
                       <div className="flex justify-between items-center py-1 border-b border-slate-100/50">
                         <span className="text-slate-400">Categoria Geral:</span>
                         <span className="font-extrabold text-slate-800">{selectedProduct.category}</span>
@@ -1261,65 +1439,105 @@ export default function Inventory({
               )}
 
               {/* -------------------- TAB: HISTÓRICO DE ENTRADAS (Trânsito de Notas) -------------------- */}
-              {activeDetailsTab === 'historico' && (
-                <div className="space-y-4 animate-fade-in text-xs font-semibold">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                    <span className="text-[11px] font-black text-[#1F3767] uppercase tracking-wider">Histórico de Nota Fiscal & Movimentações</span>
-                    <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">
-                      {stockLogs.filter(log => log.productId === selectedProduct.id).length} lançamentos encontrados
-                    </span>
-                  </div>
+              {activeDetailsTab === 'historico' && (() => {
+                const prodMovements = (stockMovements || []).filter(m => m.produto_id === selectedProduct.id);
+                const hasMovements = prodMovements.length > 0;
+                
+                return (
+                  <div className="space-y-4 animate-fade-in text-xs font-semibold">
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                       <span className="text-[11px] font-black text-[#1F3767] uppercase tracking-wider">Histórico de Nota Fiscal & Movimentações</span>
+                       <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">
+                         {prodMovements.length} lançamentos de auditoria encontrados
+                       </span>
+                    </div>
 
-                  <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-1">
-                    {stockLogs.filter(log => log.productId === selectedProduct.id).length > 0 ? (
-                      stockLogs.filter(log => log.productId === selectedProduct.id).map((log: any) => (
-                        <div key={log.id} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <div className="flex items-center space-x-2">
-                                <span className="font-mono font-black text-slate-800 text-[10.5px]"># {log.id}</span>
-                                <span className={`text-[8.5px] font-black px-1.5 py-0.25 rounded uppercase ${
-                                  log.paymentStatus === 'PAGO' ? 'bg-emerald-150 text-brand-green' : 'bg-amber-100 text-amber-700'
-                                }`}>
-                                  {log.paymentStatus === 'PAGO' ? 'CONCLUÍDO (PAGO)' : 'A PRAZO (FINANCEIRO)'}
-                                </span>
+                    <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-1">
+                      {hasMovements ? (
+                        prodMovements.map((m: any) => {
+                          const isEntrada = m.tipo === 'ENTRADA';
+                          const isSaida = m.tipo === 'SAIDA';
+                          const isAjuste = m.tipo === 'AJUSTE';
+                          
+                          return (
+                            <div key={m.id} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <div className="flex items-center space-x-2">
+                                    <span className="font-mono font-black text-slate-800 text-[10.5px]"># {m.id.substring(0, 8)}</span>
+                                    <span className={`text-[8.5px] font-black px-1.5 py-0.25 rounded uppercase ${
+                                      isEntrada ? 'bg-emerald-100 text-emerald-700' :
+                                      isSaida ? 'bg-rose-100 text-rose-750' :
+                                      'bg-amber-100 text-amber-700'
+                                    }`}>
+                                      {m.tipo}
+                                    </span>
+                                  </div>
+                                  <p className="text-[9.5px] text-slate-450 mt-1">
+                                    Data: <span className="font-bold text-slate-600">{m.created_at ? m.created_at.replace('T', ' ').substring(0, 16) : 'Agendado'}</span>
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <span className={`font-black block leading-none font-sans ${isEntrada ? 'text-brand-green' : isSaida ? 'text-rose-500' : 'text-amber-500'}`}>
+                                    {isEntrada ? '+' : isSaida ? '-' : ''}{m.quantidade} {selectedProduct.unit}
+                                  </span>
+                                  <span className="text-[9.5px] text-slate-450 mt-1 font-mono block">R$ {m.valor ? m.valor.toFixed(2) : '0.00'}/un</span>
+                                </div>
                               </div>
-                              <p className="text-[9.5px] text-slate-450 mt-1">Data: <span className="font-bold text-slate-600">{log.entryDate}</span> | Fornecedor: <span className="font-bold text-slate-700">{log.supplier}</span></p>
-                            </div>
-                            <div className="text-right">
-                              <span className="font-black text-brand-green block leading-none font-sans">+{log.quantity} {selectedProduct.unit}</span>
-                              <span className="text-[9.5px] text-slate-450 mt-1 font-mono block">R$ {log.unitValue.toFixed(2)}/un</span>
-                            </div>
-                          </div>
 
-                          {log.observation && (
-                            <p className="border-t border-slate-100/50 pt-2 mt-2 text-[10px] text-slate-500 font-medium italic leading-relaxed">
-                              Obs: {log.observation}
-                            </p>
-                          )}
+                              {m.observacao && (
+                                <p className="border-t border-slate-100/50 pt-2 mt-2 text-[10px] text-slate-500 font-medium italic leading-relaxed">
+                                  Obs: {m.observacao}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : (
+                        stockLogs.filter(log => log.productId === selectedProduct.id).length > 0 ? (
+                          stockLogs.filter(log => log.productId === selectedProduct.id).map((log: any) => (
+                            <div key={log.id} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <div className="flex items-center space-x-2">
+                                    <span className="font-mono font-black text-slate-800 text-[10.5px]"># {log.id}</span>
+                                    <span className="bg-emerald-150 text-brand-green text-[8.5px] font-black px-1.5 py-0.25 rounded uppercase">
+                                      CONCLUÍDO (PAGO)
+                                    </span>
+                                  </div>
+                                  <p className="text-[9.5px] text-slate-450 mt-1">Data: <span className="font-bold text-slate-600">{log.entryDate}</span> | Fornecedor: <span className="font-bold text-slate-700">{log.supplier}</span></p>
+                                </div>
+                                <div className="text-right">
+                                  <span className="font-black text-brand-green block leading-none font-sans">+{log.quantity} {selectedProduct.unit}</span>
+                                  <span className="text-[9.5px] text-slate-450 mt-1 font-mono block">R$ {log.unitValue.toFixed(2)}/un</span>
+                                </div>
+                              </div>
 
-                          <div className="flex justify-between items-center text-[8.5px] text-slate-400 mt-2 pt-1 border-t border-slate-50 leading-none">
-                            <span>Forma: {log.paymentMethod}</span>
-                            <span className="font-extrabold text-[#1F3767]">TOTAL DO APORTE: R$ {log.totalValue.toFixed(2)}</span>
+                              {log.observation && (
+                                <p className="border-t border-slate-100/50 pt-2 mt-2 text-[10px] text-slate-500 font-medium italic leading-relaxed">
+                                  Obs: {log.observation}
+                                </p>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-8 text-center bg-slate-50/50 rounded-xl text-slate-400">
+                            <History className="h-8 w-8 mx-auto text-slate-300 opacity-60 mb-2" />
+                            <p className="text-xs">Nenhum lote ou reabastecimento logado para este produto ainda.</p>
                           </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="p-8 text-center bg-slate-50/50 rounded-xl text-slate-400">
-                        <History className="h-8 w-8 mx-auto text-slate-300 opacity-60 mb-2" />
-                        <p className="text-xs">Nenhum lote ou reabastecimento logado para este produto ainda.</p>
-                      </div>
-                    )}
+                        )
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
             </div>
 
             {/* Modal Bottom actions */}
             <div className="px-6 py-4.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
               <span className="text-[10px] text-slate-400 font-bold">
-                ERP Vértice Logística • Sincronização em tempo real
+                Wagon AI Logística • Sincronização em tempo real
               </span>
               <button
                 type="button"

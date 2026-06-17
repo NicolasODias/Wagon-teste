@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { supabase, isSupabaseConfigured, getSupabaseErrorMsg } from '../lib/supabaseClient';
 import { 
   Building2, 
   Mail, 
@@ -64,37 +65,135 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
     setErrorMsg(null);
     setSuccessMsg(null);
 
+    const sanitizedEmail = email.toLowerCase().trim();
+
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      if (isSupabaseConfigured) {
+        console.log(`[AUTH DEBUG] Supabase - E-mail recebido no login: "${email}" -> Sanitizado para: "${sanitizedEmail}"`);
+        
+        let { data, error } = await supabase.auth.signInWithPassword({
+          email: sanitizedEmail,
+          password: password,
+        });
 
-      const data = await res.json();
+        // If credentials are valid but user doesn't exist yet, seed them on-the-fly
+        if (error) {
+          const errMsg = error.message.toLowerCase();
+          const isInvalidCreds = 
+            errMsg.includes('invalid_credentials') || 
+            errMsg.includes('invalid login credentials') ||
+            errMsg.includes('user not found');
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Falha na autenticação.');
-      }
+          if (isInvalidCreds) {
+            const isAdmin = sanitizedEmail === 'edilson.adm@wagon.com';
+            const isSeller1 = sanitizedEmail === 'vendedor1@wagon.com';
 
-      // Remember credentials if checked
-      if (rememberMe) {
-        localStorage.setItem('wagon_ai_remembered_email', email);
+            if (isAdmin || isSeller1) {
+              const defaultName = isAdmin ? 'Edilson Administrador' : 'Vendedor 01';
+              console.log(`[AUTH DEBUG] Usuário não encontrado no Supabase para: "${sanitizedEmail}". Criando usuário padrão automaticamente...`);
+
+              const signUpResult = await supabase.auth.signUp({
+                email: sanitizedEmail,
+                password: password,
+                options: {
+                  data: {
+                    fullname: defaultName,
+                    role: isAdmin ? 'ADMIN' : 'VENDEDOR'
+                  }
+                }
+              });
+
+              if (signUpResult.error) {
+                throw new Error(`Criar usuários padrão automático falhou: ${signUpResult.error.message}`);
+              }
+
+              console.log(`[AUTH DEBUG] Usuário padrão "${defaultName}" registrado! Autenticando novamente...`);
+
+              // Retry Login
+              const retryLogin = await supabase.auth.signInWithPassword({
+                email: sanitizedEmail,
+                password: password,
+              });
+
+              if (retryLogin.error) {
+                if (retryLogin.error.message.includes('Email not confirmed')) {
+                  throw new Error('Usuário criado com sucesso no Supabase! Para logar-se, desative a confirmação de e-mail (Email confirmation) nas configurações de autenticação do seu painel Supabase.');
+                }
+                throw retryLogin.error;
+              }
+
+              data = retryLogin.data;
+            } else {
+              throw error;
+            }
+          } else {
+            throw error;
+          }
+        }
+
+        if (data && data.user) {
+          const userEmail = data.user.email || '';
+          const isAdmin = userEmail.toLowerCase().includes('adm') || userEmail.toLowerCase().includes('admin');
+          const mappedUser = {
+            id: data.user.id,
+            name: data.user.user_metadata?.fullname || data.user.user_metadata?.name || (isAdmin ? 'Edilson Administrador' : 'Vendedor 01'),
+            email: userEmail,
+            role: isAdmin ? 'ADMIN' : 'VENDEDOR',
+            permissions: isAdmin ? [
+              "Acesso total", "Financeiro", "Estoque", "Pedidos", "Clientes", "Vendedores", "AI Center", "Configurações"
+            ] : [
+              "Dashboard Vendedor", "Clientes", "Nova Venda", "Histórico de Vendas", "Comissão"
+            ]
+          };
+
+          // Remember credentials if checked
+          if (rememberMe) {
+            localStorage.setItem('wagon_ai_remembered_email', email);
+          } else {
+            localStorage.removeItem('wagon_ai_remembered_email');
+          }
+
+          console.log(`[AUTH DEBUG] Usuário autenticado com sucesso via Supabase: "${mappedUser.name}"`);
+          setSuccessMsg(`Bem-vindo de volta! Autenticando ${mappedUser.name} no Supabase...`);
+
+          setTimeout(() => {
+            onLoginSuccess(mappedUser, data.session?.access_token || '');
+          }, 1000);
+        }
+
       } else {
-        localStorage.removeItem('wagon_ai_remembered_email');
-      }
+        // Fallback local API
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email: sanitizedEmail, password }),
+        });
 
-      setSuccessMsg(`Bem-vindo de volta! Autenticando ${data.user.name}...`);
-      
-      // Delay slightly for maximum premium transition effect
-      setTimeout(() => {
-        onLoginSuccess(data.user, data.token);
-      }, 1000);
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Falha na autenticação.');
+        }
+
+        // Remember credentials if checked
+        if (rememberMe) {
+          localStorage.setItem('wagon_ai_remembered_email', email);
+        } else {
+          localStorage.removeItem('wagon_ai_remembered_email');
+        }
+
+        setSuccessMsg(`Bem-vindo de volta! Autenticando ${data.user.name}...`);
+        
+        // Delay slightly for maximum premium transition effect
+        setTimeout(() => {
+          onLoginSuccess(data.user, data.token);
+        }, 1000);
+      }
 
     } catch (err: any) {
-      setErrorMsg(err.message || 'Ocorreu um erro ao conectar-se ao servidor.');
+      setErrorMsg(getSupabaseErrorMsg(err));
     } finally {
       setIsLoading(false);
     }
@@ -112,37 +211,47 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
     setErrorMsg(null);
     setSuccessMsg(null);
 
+    const sanitizedEmail = resetEmail.toLowerCase().trim();
+
     try {
-      const res = await fetch('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: resetEmail }),
-      });
+      if (isSupabaseConfigured) {
+        const { error } = await supabase.auth.resetPasswordForEmail(sanitizedEmail, {
+          redirectTo: `${window.location.origin}/`,
+        });
+        if (error) throw error;
+        setSuccessMsg('E-mail de recuperação enviado via Supabase! Por favor, verifique sua caixa de entrada.');
+      } else {
+        const res = await fetch('/api/auth/forgot-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email: sanitizedEmail }),
+        });
 
-      const data = await res.json();
+        const data = await res.json();
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Erro ao enviar e-mail de recuperação.');
+        if (!res.ok) {
+          throw new Error(data.error || 'Erro ao enviar e-mail de recuperação.');
+        }
+
+        // Automatically fill reset credentials to make simulator exceptionally user-friendly
+        if (data.code) {
+          setResetToken(data.code);
+        }
+
+        setSuccessMsg('Código gerado com sucesso! Insira-o abaixo junto com sua nova senha.');
+        
+        // Advance to reset password state
+        setTimeout(() => {
+          setAuthView('reset');
+          setErrorMsg(null);
+          setSuccessMsg(null);
+        }, 1500);
       }
-
-      // Automatically fill reset credentials to make simulator exceptionally user-friendly
-      if (data.code) {
-        setResetToken(data.code);
-      }
-
-      setSuccessMsg('Código gerado com sucesso! Insira-o abaixo junto com sua nova senha.');
-      
-      // Advance to reset password state
-      setTimeout(() => {
-        setAuthView('reset');
-        setErrorMsg(null);
-        setSuccessMsg(null);
-      }, 1500);
 
     } catch (err: any) {
-      setErrorMsg(err.message || 'E-mail não encontrado ou erro de rede.');
+      setErrorMsg(getSupabaseErrorMsg(err));
     } finally {
       setIsLoading(false);
     }
@@ -159,36 +268,60 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
     setIsLoading(true);
     setErrorMsg(null);
 
+    const sanitizedEmail = resetEmail.toLowerCase().trim();
+
     try {
-      const res = await fetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: resetEmail,
+      if (isSupabaseConfigured) {
+        const { error: otpError } = await supabase.auth.verifyOtp({
+          email: sanitizedEmail,
           token: resetToken,
-          newPassword: newPassword
-        }),
-      });
+          type: 'recovery'
+        });
+        if (otpError) throw otpError;
 
-      const data = await res.json();
+        const { error: updateError } = await supabase.auth.updateUser({
+          password: newPassword
+        });
+        if (updateError) throw updateError;
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Erro ao redefinir sua senha.');
+        setSuccessMsg('Sua senha foi redefinida no Supabase com sucesso!');
+        setTimeout(() => {
+          setAuthView('login');
+          setPassword('');
+          setErrorMsg(null);
+          setSuccessMsg(null);
+        }, 2000);
+      } else {
+        const res = await fetch('/api/auth/reset-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: sanitizedEmail,
+            token: resetToken,
+            newPassword: newPassword
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Erro ao redefinir sua senha.');
+        }
+
+        setSuccessMsg('Senha alterada! Redirecionando para a tela de login...');
+        
+        setTimeout(() => {
+          setAuthView('login');
+          setPassword('');
+          setErrorMsg(null);
+          setSuccessMsg(null);
+        }, 2000);
       }
 
-      setSuccessMsg('Senha alterada! Redirecionando para a tela de login...');
-      
-      setTimeout(() => {
-        setAuthView('login');
-        setPassword('');
-        setErrorMsg(null);
-        setSuccessMsg(null);
-      }, 2000);
-
     } catch (err: any) {
-      setErrorMsg(err.message || 'Erro ao redefinir a senha.');
+      setErrorMsg(getSupabaseErrorMsg(err));
     } finally {
       setIsLoading(false);
     }

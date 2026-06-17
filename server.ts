@@ -15,7 +15,8 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // ==========================================
 // SECURITY & SESSION ENGINE (WAGON AI)
@@ -353,6 +354,16 @@ Simulação offline devido à ausência de chave de API Gemini ativa no ambiente
 app.post('/api/gemini/insights', async (req, res) => {
   const { products, clients, orders, financialRecords, promptContext } = req.body;
 
+  // Custom data threshold guard: If we have insufficient production data, do not fabricate generic insights
+  if (!products || products.length === 0 || !clients || clients.length === 0 || !orders || orders.length === 0) {
+    return res.json({
+      success: true,
+      method: 'Wagon AI Minimal Data Rule',
+      reportText: '## 📊 Relatório Analítico Executivo\n\nAinda não existem dados suficientes para gerar análises.',
+      suggestedCards: []
+    });
+  }
+
   try {
     if (!ai) {
       const fallbackResponse = getLocalInsightsFallback(products, clients, orders, financialRecords, false);
@@ -466,6 +477,15 @@ Retorne também 2 cards táticos resumidos em formato JSON no final do texto ou 
     const fallbackResponse = getLocalInsightsFallback(products, clients, orders, financialRecords, true);
     return res.json(fallbackResponse);
   }
+});
+
+// Global Error Handler to guarantee JSON response and prevent HTML error leakage
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error('[Global Server Error Handler]', err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || 'Ocorreu um erro interno no servidor.'
+  });
 });
 
 // Configure Vite or Static Files depending on Environment

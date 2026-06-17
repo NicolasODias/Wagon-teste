@@ -114,7 +114,7 @@ export default function VirtualCFO({
 
   const totalTaxes = orders.reduce((sum, o) => sum + (o.taxes?.total || 0), 0);
   const brutoReal = totalFaturamento - totalCOGS;
-  const lucroLiquidoEstimado = Math.max(5000, brutoReal - totalTaxes);
+  const lucroLiquidoEstimado = brutoReal - totalTaxes;
   const margemLiquidaMedia = totalFaturamento > 0 ? (lucroLiquidoEstimado / totalFaturamento) * 100 : 0;
 
   // C. Stock Capital Analytics
@@ -304,23 +304,29 @@ export default function VirtualCFO({
       const latencyMs = (performance.now() - startTime).toFixed(0);
 
       if (response.ok) {
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonErr) {
+          throw new Error('Formato do arquivo de resposta do CFO inválido (não-JSON).');
+        }
+        
         const assistantMsg: ChatMessage = {
           id: `asst-${Date.now()}`,
           role: 'assistant',
-          text: data.reportText || `Analisei sua demanda e os indicadores operacionais. Nossas despesas de insumos totalizam R$ ${totalCOGS.toLocaleString('pt-BR')} com margem líquida consolidada em ${margemLiquidaMedia.toFixed(1)}%. Recomendo manter rédeas curtas nos prazos de liquidez. Como deseja prosseguir?`,
+          text: data?.reportText || `Analisei sua demanda e os indicadores operacionais. Nossas despesas de insumos totalizam R$ ${totalCOGS.toLocaleString('pt-BR')} com margem líquida consolidada em ${margemLiquidaMedia.toFixed(1)}%. Recomendo manter rédeas curtas nos prazos de liquidez. Como deseja prosseguir?`,
           timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-          isHeuristic: data.method?.includes('Heurística')
+          isHeuristic: data?.method?.includes('Heurística')
         };
         setChatMessages(prev => [...prev, assistantMsg]);
         setTelemetry({
-          model: data.method?.includes('Gemini') ? 'gemini-3.5-flash' : 'Oráculo Local v1.8',
+          model: data?.method?.includes('Gemini') ? 'gemini-3.5-flash' : 'Oráculo Local v1.8',
           uptime: '99.98%',
           latency: `${latencyMs}ms`,
-          tokens: `${userMsgText.length + (data.reportText?.length || 100)}`
+          tokens: `${userMsgText.length + (data?.reportText?.length || 100)}`
         });
       } else {
-        throw new Error('Server returned unsafe response status');
+        throw new Error('Servidor retornou código de erro na requisição');
       }
 
     } catch (err) {
@@ -384,7 +390,7 @@ Sob o atual cenário de faturamento bruto estabilizado de **R$ ${totalFaturament
 - No entanto, a necessidade imediata de capital de giro exigirá novos aportes na ordem de R$ ${(capitalInvestidoEstoque * 0.15).toFixed(0)} para manter os estoques mínimos de logística equilibrados.`;
     }
 
-    return `### 💼 Parecer Consolidado do CFO Virtual Vértice
+    return `### 💼 Parecer Consolidado do CFO Virtual Wagon AI
     
 Focando na nossa operação executiva, os principais dados de governança fiscal indicam:
 - **Rentabilidade Real**: R$ ${lucroLiquidoEstimado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} correspondendo a uma eficiência de margem líquida operacional de **${margemLiquidaMedia.toFixed(1)}%**.

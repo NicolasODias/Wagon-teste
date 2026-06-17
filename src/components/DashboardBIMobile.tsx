@@ -80,14 +80,52 @@ export default function DashboardBIMobile({
   const [isCopilotExpanded, setIsCopilotExpanded] = useState(false);
   const [isChartExpanded, setIsChartExpanded] = useState(false);
 
+  // Calculate dynamic 7-point dataset based on actual user-entered data
+  const getDaysDiffForChart = (dateStr: string) => {
+    if (!dateStr) return 999;
+    const targetDate = dateStr.split('T')[0];
+    const todayStr = '2026-06-03';
+    const time1 = new Date(targetDate).getTime();
+    const time2 = new Date(todayStr).getTime();
+    return Math.floor((time2 - time1) / (1000 * 60 * 60 * 24));
+  };
+
+  const getGroupStats = (minDiff: number, maxDiff: number) => {
+    const groupOrders = orders.filter(o => {
+      const diff = getDaysDiffForChart(o.date);
+      return diff >= minDiff && (maxDiff === 999 ? true : diff <= maxDiff);
+    });
+
+    const groupFinancials = financialRecords.filter(f => {
+      const diff = getDaysDiffForChart(f.dueDate);
+      return diff >= minDiff && (maxDiff === 999 ? true : diff <= maxDiff);
+    });
+
+    const entradas = groupOrders.reduce((acc, o) => acc + o.total, 0);
+
+    const costInsumos = groupOrders.reduce((acc, o) => acc + o.items.reduce((sum, it) => {
+      const p = products.find(prod => prod.id === it.productId);
+      return sum + (p ? p.costPrice * it.quantity : 0);
+    }, 0), 0);
+    const taxes = groupOrders.reduce((acc, o) => acc + o.taxes.total, 0);
+
+    const comissoes = Math.round(entradas * 0.05);
+    const lucro = entradas - costInsumos - taxes - comissoes;
+
+    return { 
+      entradas, 
+      lucro: Math.max(0, lucro) 
+    };
+  };
+
   // Simple 7-day points helper for the compact graph
   const chartPoints = [
-    { day: 'D-12', entradas: 12400, lucro: 4000 },
-    { day: 'D-10', entradas: 18200, lucro: 8700 },
-    { day: 'D-08', entradas: 15400, lucro: 4200 },
-    { day: 'D-06', entradas: 22100, lucro: 8100 },
-    { day: 'D-04', entradas: 28550, lucro: 12050 },
-    { day: 'D-02', entradas: 24200, lucro: 11000 },
+    { day: 'D-12', ...getGroupStats(11, 12) },
+    { day: 'D-10', ...getGroupStats(9, 10) },
+    { day: 'D-08', ...getGroupStats(7, 8) },
+    { day: 'D-06', ...getGroupStats(5, 6) },
+    { day: 'D-04', ...getGroupStats(3, 4) },
+    { day: 'D-02', ...getGroupStats(1, 2) },
     { day: 'Hoje', entradas: totalFaturamento, lucro: calculatedLucroVal }
   ];
 
@@ -112,7 +150,7 @@ export default function DashboardBIMobile({
           <div className="flex items-center space-x-2">
             <span className="text-lg">👋</span>
             <h2 className={`text-base font-black tracking-tight ${isDark ? 'text-white' : 'text-[#1F3767]'}`}>
-              Olá, Nicolas
+              Olá, Edilson Mesquita
             </h2>
           </div>
           
@@ -176,7 +214,7 @@ export default function DashboardBIMobile({
         <div className={`text-[11px] font-bold ${isDark ? 'text-slate-300' : 'text-[#1F3767]/90'}`}>
           Operação faturou <strong className="text-[#1E94CF]">R$ {totalFaturamento.toLocaleString('pt-BR')}</strong> no período selecionado.
           <span className="text-[#8BC039] font-extrabold block text-[10px] mt-0.5 animate-pulse">
-            ▲ 18.2% acima do período anterior
+            ▲ 0% acima do período anterior
           </span>
         </div>
       </div>
@@ -272,7 +310,7 @@ export default function DashboardBIMobile({
               R$ {totalFaturamento.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
             </h3>
             <span className="text-[8px] text-[#8BC039] font-extrabold flex items-center mt-0.5">
-              <ArrowUpRight className="h-3 w-3 mr-0.5" /> +18.2%
+              <ArrowUpRight className="h-3 w-3 mr-0.5" /> 0%
             </span>
           </div>
         </div>

@@ -144,10 +144,10 @@ export default function Sidebar({
             </div>
             <div>
               <h1 className="font-extrabold tracking-wider text-xl flex items-center gap-1">
-                VÉRTICE <span className="text-brand-light text-[10px] font-medium tracking-tight bg-white/15 px-1.5 py-0.5 rounded-md">ERP</span>
+                WAGON <span className="text-brand-light text-[10px] font-medium tracking-tight bg-white/15 px-1.5 py-0.5 rounded-md">AI</span>
               </h1>
               <p className={`text-[9px] font-medium uppercase tracking-widest leading-none mt-1 ${isDark ? 'text-slate-400' : 'text-slate-300'}`}>
-                Distribuição S.A.
+                Inteligência Comercial S.A.
               </p>
             </div>
           </div>

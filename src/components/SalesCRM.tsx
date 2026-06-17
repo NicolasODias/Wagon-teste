@@ -33,9 +33,19 @@ import {
   ChevronRight,
   Coins,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Printer,
+  Download,
+  Share2,
+  ArrowLeft,
+  Mail,
+  Link,
+  Check,
+  CheckCircle,
+  ExternalLink
 } from 'lucide-react';
-import { Product, Client, Order, OrderItem } from '../types';
+import { Product, Client, Order, OrderItem, AuthUser } from '../types';
+import { generateInvoicePDF, generateSecureValidationHash } from '../utils/pdfGenerator';
 
 interface SalesCRMProps {
   products: Product[];
@@ -43,7 +53,10 @@ interface SalesCRMProps {
   orders: Order[];
   onAddOrder: (order: Order) => void;
   onAddClient: (client: Client) => void;
+  onUpdateClient?: (client: Client) => void;
+  onDeleteClient?: (clientId: string) => void;
   onUpdateOrderStatus: (orderId: string, newStatus: Order['status'], invoiceNum?: string) => void;
+  currentUser?: AuthUser | null;
   initialSubTab?: 'pipeline' | 'crm' | 'new-order';
 }
 
@@ -53,10 +66,20 @@ export default function SalesCRM({
   orders, 
   onAddOrder, 
   onAddClient,
+  onUpdateClient,
+  onDeleteClient,
   onUpdateOrderStatus,
+  currentUser,
   initialSubTab = 'pipeline'
 }: SalesCRMProps) {
   const [activeSubTab, setActiveSubTab] = useState<'pipeline' | 'crm' | 'new-order'>(initialSubTab);
+
+  // High-performance invoice visualizer states
+  const [selectedInvoiceOrderId, setSelectedInvoiceOrderId] = useState<string | null>(null);
+  const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+  const [showShareMenu, setShowShareMenu] = useState<boolean>(false);
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -77,6 +100,7 @@ export default function SalesCRM({
 
   // States for New Client Formulation
   const [showClientModal, setShowClientModal] = useState(false);
+  const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [newClientName, setNewClientName] = useState('');
   const [newClientCNPJ, setNewClientCNPJ] = useState('');
   const [newClientEmail, setNewClientEmail] = useState('');
@@ -84,10 +108,42 @@ export default function SalesCRM({
   const [newClientRegion, setNewClientRegion] = useState<Client['region']>('Sudeste');
   const [newClientCreditLimit, setNewClientCreditLimit] = useState(30000);
   const [newClientCity, setNewClientCity] = useState('');
+  const [newClientAddress, setNewClientAddress] = useState('');
   const [newClientOwner, setNewClientOwner] = useState('');
   const [newClientSalesRep, setNewClientSalesRep] = useState('Marcos Pinheiro');
   const [newClientStatus, setNewClientStatus] = useState<'Ativo' | 'Inativo'>('Ativo');
   const [newClientConsignments, setNewClientConsignments] = useState('');
+
+  // When editingClient changes, update the form fields accordingly
+  useEffect(() => {
+    if (editingClient) {
+      setNewClientName(editingClient.name);
+      setNewClientCNPJ(editingClient.cnpj);
+      setNewClientEmail(editingClient.email);
+      setNewClientPhone(editingClient.phone);
+      setNewClientRegion(editingClient.region);
+      setNewClientCreditLimit(editingClient.creditLimit);
+      setNewClientCity(editingClient.city || '');
+      setNewClientAddress(editingClient.endereco || '');
+      setNewClientOwner(editingClient.owner || '');
+      setNewClientSalesRep(editingClient.salesRep || 'Marcos Pinheiro');
+      setNewClientStatus(editingClient.status || 'Ativo');
+      setNewClientConsignments(editingClient.consignments ? editingClient.consignments.join(', ') : '');
+    } else {
+      setNewClientName('');
+      setNewClientCNPJ('');
+      setNewClientEmail('');
+      setNewClientPhone('');
+      setNewClientRegion('Sudeste');
+      setNewClientCreditLimit(30000);
+      setNewClientCity('');
+      setNewClientAddress('');
+      setNewClientOwner('');
+      setNewClientSalesRep('Marcos Pinheiro');
+      setNewClientStatus('Ativo');
+      setNewClientConsignments('');
+    }
+  }, [editingClient]);
 
   // Premium CRM States & Filters
   const [selectedCrmClientId, setSelectedCrmClientId] = useState<string | null>(null);
@@ -224,13 +280,34 @@ export default function SalesCRM({
     };
 
     onAddOrder(newOrder);
+
+    // Auto-generate and cache PDF Base64 string directly on order creation
+    generateInvoicePDF(newOrder, clients, products, { isDownload: false }).then(doc => {
+      try {
+        const dataUri = doc.output('datauristring');
+        
+        // Update the pdfUrl with the static base64 representation of this PDF document
+        const cachedOrders = localStorage.getItem('vertice_erp_orders');
+        if (cachedOrders) {
+          const allOrders: Order[] = JSON.parse(cachedOrders);
+          const index = allOrders.findIndex(o => o.id === newOrder.id);
+          if (index !== -1) {
+            allOrders[index].pdfUrl = dataUri;
+            localStorage.setItem('vertice_erp_orders', JSON.stringify(allOrders));
+          }
+        }
+      } catch (err) {
+        console.error('Error generating and caching PDF on CRM order creation:', err);
+      }
+    });
+
     setBasket([]);
     setSelectedClientId('');
     setErrorWarning('');
     setActiveSubTab('pipeline');
   };
 
-  // Create Client
+  // Create / Edit Client
   const handleCreateClient = () => {
     if (!newClientName || !newClientCNPJ) {
       alert('Preencha os campos obrigatórios (Razão Social e CNPJ).');
@@ -241,32 +318,58 @@ export default function SalesCRM({
       ? newClientConsignments.split(',').map(item => item.trim()).filter(Boolean)
       : [];
 
-    const newCli: Client = {
-      id: `cli_${clients.length + 1}`,
-      name: newClientName,
-      cnpj: newClientCNPJ,
-      email: newClientEmail || 'comercial@empresa.com.br',
-      phone: newClientPhone || '(11) 9999-9999',
-      creditLimit: Number(newClientCreditLimit),
-      debtBalance: 0,
-      region: newClientRegion,
-      purchaseCount: 0,
-      totalSpent: 0,
-      riskClass: 'A',
-      city: newClientCity || 'Sorocaba',
-      owner: newClientOwner || 'Sem Proprietário',
-      salesRep: newClientSalesRep || 'Sem Vendedor',
-      status: newClientStatus || 'Ativo',
-      consignments: consignmentsArray
-    };
+    if (editingClient) {
+      const updatedCli: Client = {
+        ...editingClient,
+        name: newClientName,
+        cnpj: newClientCNPJ,
+        email: newClientEmail || 'comercial@empresa.com.br',
+        phone: newClientPhone || '(11) 9999-9999',
+        creditLimit: Number(newClientCreditLimit),
+        region: newClientRegion,
+        city: newClientCity || 'Sorocaba',
+        owner: newClientOwner || 'Sem Proprietário',
+        salesRep: newClientSalesRep || 'Sem Vendedor',
+        status: newClientStatus || 'Ativo',
+        consignments: consignmentsArray,
+        endereco: newClientAddress || ''
+      };
 
-    onAddClient(newCli);
+      if (onUpdateClient) {
+        onUpdateClient(updatedCli);
+      }
+    } else {
+      const newCli: Client = {
+        id: `cli_${clients.length + 1}`,
+        name: newClientName,
+        cnpj: newClientCNPJ,
+        email: newClientEmail || 'comercial@empresa.com.br',
+        phone: newClientPhone || '(11) 9999-9999',
+        creditLimit: Number(newClientCreditLimit),
+        debtBalance: 0,
+        region: newClientRegion,
+        purchaseCount: 0,
+        totalSpent: 0,
+        riskClass: 'A',
+        city: newClientCity || 'Sorocaba',
+        owner: newClientOwner || 'Sem Proprietário',
+        salesRep: newClientSalesRep || 'Sem Vendedor',
+        status: newClientStatus || 'Ativo',
+        consignments: consignmentsArray,
+        endereco: newClientAddress || ''
+      };
+
+      onAddClient(newCli);
+    }
+
     setShowClientModal(false);
+    setEditingClient(null);
     setNewClientName('');
     setNewClientCNPJ('');
     setNewClientEmail('');
     setNewClientPhone('');
     setNewClientCity('');
+    setNewClientAddress('');
     setNewClientOwner('');
     setNewClientSalesRep('Marcos Pinheiro');
     setNewClientStatus('Ativo');
@@ -303,6 +406,21 @@ export default function SalesCRM({
     return matchesStatus && matchesSearch;
   });
 
+  // Helper to check if a client has purchases in the last 90 days
+  const isClientActiveInLast90Days = (c: Client) => {
+    const clientOrders = orders.filter(o => o.clientId === c.id);
+    if (clientOrders.length === 0) return false;
+    
+    // Base system date is June 9, 2026
+    const baseDate = new Date('2026-06-09');
+    const ninetyDaysAgo = new Date(baseDate.getTime() - 90 * 24 * 60 * 60 * 1000);
+    
+    return clientOrders.some(order => {
+      const orderDate = new Date(order.date);
+      return orderDate >= ninetyDaysAgo;
+    });
+  };
+
   // Filtering Clients CRM list
   const filteredClients = clients.filter(c => {
     // text search
@@ -311,9 +429,13 @@ export default function SalesCRM({
                           c.email.toLowerCase().includes(crmSearch.toLowerCase()) ||
                           (c.owner && c.owner.toLowerCase().includes(crmSearch.toLowerCase()));
     
-    // status filter
-    const statusVal = c.status || 'Ativo';
-    const matchesStatus = crmStatusFilter === 'all' || statusVal === crmStatusFilter;
+    // status filter (Active defined as purchased in last 90 days; Inactive as no purchase in last 90 days)
+    let matchesStatus = true;
+    if (crmStatusFilter === 'Ativo') {
+      matchesStatus = isClientActiveInLast90Days(c);
+    } else if (crmStatusFilter === 'Inativo') {
+      matchesStatus = !isClientActiveInLast90Days(c);
+    }
     
     // region filter
     const matchesRegion = crmRegionFilter === 'all' || c.region === crmRegionFilter;
@@ -409,7 +531,8 @@ export default function SalesCRM({
                 { id: 'Aguardando Faturamento', label: 'Aguardando Faturamento' },
                 { id: 'Em Separação', label: 'Em Separação' },
                 { id: 'Rota de Entrega', label: 'Rota de Entrega' },
-                { id: 'Entregue', label: 'Entregues' }
+                { id: 'Entregue', label: 'Entregues' },
+                { id: 'Cancelado', label: 'Cancelados' }
               ].map((cat) => (
                 <button
                   key={cat.id}
@@ -426,14 +549,14 @@ export default function SalesCRM({
             </div>
           </div>
 
-          {/* Orders Hub & Seffaz simulation splits */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Expanded full-width view of Active Orders */}
+          <div className="w-full">
             
             {/* Active Orders List */}
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm md:col-span-8 overflow-hidden">
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden w-full">
               
               {/* Desktop Table View */}
-              <div className="hidden md:block">
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left font-sans text-xs">
                   <thead>
                     <tr className="bg-slate-50/70 border-b border-slate-100 text-[10px] uppercase font-black text-slate-500">
@@ -478,6 +601,7 @@ export default function SalesCRM({
                               order.status === 'Entregue' ? 'bg-emerald-50 text-brand-green' :
                               order.status === 'Rota de Entrega' ? 'bg-sky-50 text-brand-light' :
                               order.status === 'Em Separação' ? 'bg-amber-50 text-amber-500' :
+                              order.status === 'Cancelado' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
                               'bg-slate-100 text-slate-500 animate-pulse'
                             }`}>
                               {order.status}
@@ -490,33 +614,63 @@ export default function SalesCRM({
                             )}
                           </td>
                           <td className="p-4 text-center">
-                            {order.status === 'Aguardando Faturamento' ? (
+                            <div className="flex items-center justify-center space-x-2">
+                              {/* Workflow action buttons */}
                               <button
-                                onClick={() => triggerBillingFlow(order.id)}
-                                className="font-bold text-[10px] uppercase tracking-wide bg-[#8BC039] hover:bg-[#7dab32] text-white px-3 py-1.5 rounded-lg shadow-sm transition-all inline-flex items-center space-x-1"
+                                onClick={() => {
+                                  setSelectedInvoiceOrderId(order.id);
+                                }}
+                                className="font-bold text-[10px] uppercase tracking-wide bg-[#1E94CF] hover:bg-[#1a85bc] text-white px-3 py-1.5 rounded-lg shadow-sm transition-all inline-flex items-center space-x-1 cursor-pointer text-nowrap"
+                                title="Acessar Nota de Venda"
                               >
-                                <FileCheck2 className="h-3.5 w-3.5" />
-                                <span>Emitir NF-e</span>
+                                <span>📄 Acessar Nota</span>
                               </button>
-                            ) : order.status === 'Em Separação' ? (
-                              <button
-                                onClick={() => onUpdateOrderStatus(order.id, 'Rota de Entrega')}
-                                className="text-[10px] font-bold text-slate-600 border border-slate-200 hover:bg-slate-50 p-2.5 py-1.5 rounded-lg transition-all shadow-inner"
-                              >
-                                Expedir Carga
-                              </button>
-                            ) : order.status === 'Rota de Entrega' ? (
-                              <button
-                                onClick={() => onUpdateOrderStatus(order.id, 'Entregue')}
-                                className="text-[10px] font-bold bg-brand-dark hover:bg-[#2c477a] text-white p-2.5 py-1.5 rounded-lg transition-all"
-                              >
-                                Marcar Entregue
-                              </button>
-                            ) : (
-                              <span className="text-slate-400 text-[10px] font-bold flex items-center justify-center gap-1">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-brand-green" /> Concluído
-                              </span>
-                            )}
+                              {order.status === 'Em Separação' && (
+                                <button
+                                  onClick={() => onUpdateOrderStatus(order.id, 'Rota de Entrega')}
+                                  className="text-[10px] font-bold text-slate-600 border border-slate-200 hover:bg-slate-50 p-2.5 py-1.5 rounded-lg transition-all shadow-inner cursor-pointer"
+                                >
+                                  Expedir Carga
+                                </button>
+                              )}
+                              {order.status === 'Rota de Entrega' && (
+                                <button
+                                  onClick={() => onUpdateOrderStatus(order.id, 'Entregue')}
+                                  className="text-[10px] font-bold bg-brand-dark hover:bg-[#2c477a] text-white p-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
+                                >
+                                  Marcar Entregue
+                                </button>
+                              )}
+                              {order.status === 'Entregue' && (
+                                <span className="text-slate-400 text-[10px] font-bold flex items-center justify-center gap-1">
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-brand-green" /> Concluído
+                                </span>
+                              )}
+                              {order.status === 'Cancelado' && (
+                                <span className="text-rose-500 text-[10px] font-bold flex items-center justify-center gap-1">
+                                  <AlertTriangle className="h-3.5 w-3.5" /> Canceled
+                                </span>
+                              )}
+
+                              {/* Subtle cancel button for administrative users */}
+                              {order.status !== 'Cancelado' && (
+                                <button
+                                  onClick={() => {
+                                    if (currentUser?.role !== 'ADMIN') {
+                                      alert('🚫 Somente administradores cadastrados possuem permissão para cancelar pedidos no ERP.');
+                                      return;
+                                    }
+                                    if (confirm(`Atenção: Confirma o cancelamento retroativo do pedido ${order.id}? Essa ação reverterá estoques, relatórios de receitas e comissões corporativas.`)) {
+                                      onUpdateOrderStatus(order.id, 'Cancelado');
+                                    }
+                                  }}
+                                  className="text-[10px] font-extrabold text-rose-600 hover:text-white border border-rose-200 hover:bg-rose-600 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
+                                  title="Cancelar Pedido (Requer Administrador)"
+                                >
+                                  Cancelar
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -545,6 +699,7 @@ export default function SalesCRM({
                             order.status === 'Entregue' ? 'bg-emerald-50 text-brand-green' :
                             order.status === 'Rota de Entrega' ? 'bg-sky-50 text-brand-light' :
                             order.status === 'Em Separação' ? 'bg-amber-50 text-amber-500' :
+                            order.status === 'Cancelado' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
                             'bg-slate-150 text-slate-650 animate-pulse'
                           }`}>
                             {order.status}
@@ -575,33 +730,61 @@ export default function SalesCRM({
                         )}
 
                         <div className="pt-2">
-                          {order.status === 'Aguardando Faturamento' ? (
+                          <div className="flex flex-col gap-2">
                             <button
-                              onClick={() => triggerBillingFlow(order.id)}
-                              className="font-bold text-xs w-full justify-center opacity-95 hover:opacity-100 bg-[#8BC039] text-white py-2.5 rounded-xl shadow-sm transition-all flex items-center space-x-1.5 min-h-[44px]"
+                              onClick={() => {
+                                setSelectedInvoiceOrderId(order.id);
+                              }}
+                              className="font-bold text-xs w-full justify-center bg-[#1E94CF] hover:bg-[#1a85bc] text-white py-2.5 rounded-xl shadow-sm transition-all flex items-center space-x-1.5 min-h-[44px] cursor-pointer"
+                              title="Acessar Nota de Venda"
                             >
-                              <FileCheck2 className="h-4 w-4" />
-                              <span>Emitir NF-e</span>
+                              <span>📄 Acessar Nota</span>
                             </button>
-                          ) : order.status === 'Em Separação' ? (
-                            <button
-                              onClick={() => onUpdateOrderStatus(order.id, 'Rota de Entrega')}
-                              className="text-xs font-bold text-slate-650 border border-slate-200 hover:bg-slate-50 w-full py-2.5 rounded-xl transition-all min-h-[44px]"
-                            >
-                              Expedir Carga
-                            </button>
-                          ) : order.status === 'Rota de Entrega' ? (
-                            <button
-                              onClick={() => onUpdateOrderStatus(order.id, 'Entregue')}
-                              className="text-xs font-bold bg-brand-dark hover:bg-[#2c477a] text-white w-full py-2.5 rounded-xl transition-all min-h-[44px]"
-                            >
-                              Marcar Entregue
-                            </button>
-                          ) : (
-                            <div className="text-slate-400 text-xs font-bold flex items-center justify-center gap-1 bg-slate-50 py-2.5 rounded-xl min-h-[44px]">
-                              <CheckCircle2 className="h-4 w-4 text-brand-green" /> Concluído
-                            </div>
-                          )}
+                            {order.status === 'Em Separação' && (
+                              <button
+                                onClick={() => onUpdateOrderStatus(order.id, 'Rota de Entrega')}
+                                className="text-xs font-bold text-slate-650 border border-slate-200 hover:bg-slate-50 w-full py-2.5 rounded-xl transition-all min-h-[44px] cursor-pointer"
+                              >
+                                Expedir Carga
+                              </button>
+                            )}
+                            {order.status === 'Rota de Entrega' && (
+                              <button
+                                onClick={() => onUpdateOrderStatus(order.id, 'Entregue')}
+                                className="text-xs font-bold bg-brand-dark hover:bg-[#2c477a] text-white w-full py-2.5 rounded-xl transition-all min-h-[44px] cursor-pointer"
+                              >
+                                Marcar Entregue
+                              </button>
+                            )}
+                            {order.status === 'Entregue' && (
+                              <div className="text-slate-400 text-xs font-bold flex items-center justify-center gap-1 bg-slate-50 py-2.5 rounded-xl min-h-[44px]">
+                                <CheckCircle2 className="h-4 w-4 text-brand-green" /> Concluído
+                              </div>
+                            )}
+                            {order.status === 'Cancelado' && (
+                              <div className="text-rose-500 text-xs font-bold flex items-center justify-center gap-1 bg-rose-50 py-2.5 rounded-xl min-h-[44px] border border-rose-100">
+                                <AlertTriangle className="h-4 w-4 text-rose-500" /> Pedido Cancelado
+                              </div>
+                            )}
+
+                            {/* Cancel Option button (Only shown if active) */}
+                            {order.status !== 'Cancelado' && (
+                              <button
+                                onClick={() => {
+                                  if (currentUser?.role !== 'ADMIN') {
+                                    alert('🚫 Somente administradores cadastrados possuem permissão para cancelar pedidos no ERP.');
+                                    return;
+                                  }
+                                  if (confirm(`Atenção: Confirma o cancelamento retroativo do pedido ${order.id}? Essa ação reverterá estoques, relatórios de receitas e comissões corporativas.`)) {
+                                    onUpdateOrderStatus(order.id, 'Cancelado');
+                                  }
+                                }}
+                                className="text-xs font-bold border border-rose-200 text-rose-650 hover:bg-rose-50 w-full py-2.5 rounded-xl transition-all min-h-[44px] cursor-pointer"
+                              >
+                                Cancelar Pedido
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -611,64 +794,6 @@ export default function SalesCRM({
                 )}
               </div>
 
-            </div>
-
-            {/* Simulated SEFAZ Billing Fiscal Panel */}
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm md:col-span-4 p-5">
-              <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-100 pb-3 mb-3">Monitor Fiscal SEFAZ (Receita)</h4>
-              
-              {billingOrderId ? (
-                <div className="space-y-4">
-                  <div className="bg-slate-950 p-4 rounded-xl font-mono text-[10px] text-brand-green overflow-hidden relative">
-                    <div className="absolute top-0 right-0 p-2 opacity-10">
-                      <Scale className="h-8 w-8 text-white" />
-                    </div>
-                    <p className="text-slate-400 font-bold mb-2">NF-E TRANSMISSOR CORE v3.1</p>
-                    <p className="text-slate-200">Processando contrato: {billingOrderId}</p>
-                    
-                    <div className="mt-3.5 space-y-2">
-                      <div className="flex items-center space-x-2">
-                        <span className={`w-2 h-2 rounded-full ${billingStep >= 1 ? 'bg-brand-green' : 'bg-slate-700'}`}></span>
-                        <p className={billingStep >= 1 ? 'text-white' : 'text-slate-600'}>Assinando digitalmente Certificado A2...</p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <span className={`w-2 h-2 rounded-full ${billingStep >= 2 ? 'bg-brand-green' : 'bg-slate-700'}`}></span>
-                        <p className={billingStep >= 2 ? 'text-white' : 'text-slate-600'}>Transmitindo lote XML à Receita Federal...</p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <span className={`w-2 h-2 rounded-full ${billingStep >= 3 ? 'bg-brand-green' : 'bg-slate-700'}`}></span>
-                        <p className={billingStep >= 3 ? 'text-white' : 'text-slate-600'}>Calculando ICMS/IPI e gerando DANFE...</p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <span className={`w-2 h-2 rounded-full ${billingStep >= 4 ? 'bg-brand-green text-green-400' : 'bg-slate-700'}`}></span>
-                        <p className={billingStep >= 4 ? 'text-white font-bold' : 'text-slate-600'}>Autorizado para uso comercial!</p>
-                      </div>
-                    </div>
-
-                    {generatedInvoice && (
-                      <div className="mt-4 p-2 bg-emerald-950/40 rounded border border-emerald-800 text-slate-100 text-[11px] font-bold">
-                        🎉 Chave de Acesso: {generatedInvoice}
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div className="space-y-2.5 text-xs text-slate-500 font-semibold leading-relaxed">
-                    <p className="flex items-center">
-                      <ShieldCheck className="h-4 w-4 text-brand-green mr-2" />
-                      <span>Certificado Digital IPC-Brasil ativo</span>
-                    </p>
-                    <p className="flex items-center">
-                      <Activity className="h-4 w-4 text-[#1e94cf] mr-2" />
-                      <span>Provedor SEFAZ Estadual On-line</span>
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="h-44 flex flex-col items-center justify-center text-center text-slate-400 text-xs">
-                  <p>Inicie a emissão da NF-e em algum pedido.</p>
-                  <p className="text-[10px] text-slate-500 mt-1">O certificado eletrônico e as guias tributárias correspondentes serão anexados.</p>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -905,9 +1030,43 @@ export default function SalesCRM({
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-end text-[10px] text-brand-light font-bold pt-2 border-t border-slate-50/80 mt-1">
-                          <span>Acessar Ficha Geral</span>
-                          <ChevronRight className="h-3.5 w-3.5 ml-0.5 group-hover:translate-x-1 transition-transform" />
+                        <div className="flex items-center justify-between text-[10px] pt-2 border-t border-slate-150 mt-1" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingClient(client);
+                                setShowClientModal(true);
+                              }}
+                              className="text-sky-600 hover:text-sky-800 font-bold bg-sky-50 px-2.5 py-1 rounded-lg hover:bg-sky-100 flex items-center space-x-1 transition-colors cursor-pointer border-none"
+                              title="Editar este cliente"
+                            >
+                              <span>Editar</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`Tem certeza que deseja excluir o cliente "${client.name}"?`)) {
+                                  if (onDeleteClient) onDeleteClient(client.id);
+                                }
+                              }}
+                              className="text-rose-600 hover:text-rose-800 font-bold bg-rose-50 px-2.5 py-1 rounded-lg hover:bg-rose-100 flex items-center space-x-1 transition-colors cursor-pointer border-none"
+                              title="Excluir este cliente"
+                            >
+                              <span>Excluir</span>
+                            </button>
+                          </div>
+
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedCrmClientId(client.id);
+                            }}
+                            className="flex items-center text-brand-light font-bold hover:brightness-95 cursor-pointer"
+                          >
+                            <span>Acessar Ficha Geral</span>
+                            <ChevronRight className="h-3.5 w-3.5 ml-0.5 group-hover:translate-x-1 transition-transform" />
+                          </div>
                         </div>
                       </div>
 
@@ -979,10 +1138,10 @@ export default function SalesCRM({
                         exit={{ x: "100%" }}
                         transition={{ type: 'spring', damping: 26, stiffness: 210 }}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-full max-w-2xl bg-[#FCFDFE] h-full shadow-2xl flex flex-col justify-between overflow-hidden relative"
+                        className="w-full sm:max-w-2xl bg-[#FCFDFE] h-[92vh] sm:h-full mt-auto sm:mt-0 rounded-t-3xl sm:rounded-none shadow-2xl flex flex-col justify-between overflow-hidden relative"
                       >
                         {/* Premium Drawer Header */}
-                        <div className="p-6 bg-gradient-to-r from-slate-900 to-slate-950 text-white shrink-0 relative">
+                        <div className="pt-8 pb-5 px-6 bg-gradient-to-r from-slate-900 to-slate-950 text-white shrink-0 relative">
                           <div className="absolute top-0 right-0 w-64 h-64 bg-brand-light/10 rounded-full blur-3xl pointer-events-none"></div>
                           
                           <div className="flex justify-between items-start relative z-10">
@@ -1028,7 +1187,7 @@ export default function SalesCRM({
                         </div>
 
                         {/* Scrollable Contents representing client analytics */}
-                        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                        <div className="flex-1 overflow-y-auto p-6 pb-12 space-y-6">
                           
                           {/* A. GRAPHICAL EVOLUTION OF PURCHASES */}
                           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-3">
@@ -1562,9 +1721,11 @@ export default function SalesCRM({
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
           <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl w-full max-w-lg overflow-hidden animate-scale-up">
             <div className="p-5 bg-brand-dark text-white flex items-center justify-between">
-              <h3 className="font-extrabold text-sm tracking-wide">Ficha Cadastral CRM Cliente</h3>
+              <h3 className="font-extrabold text-sm tracking-wide">
+                {editingClient ? `Editar Ficha CRM: ${editingClient.name}` : 'Ficha Cadastral CRM Cliente'}
+              </h3>
               <button 
-                onClick={() => setShowClientModal(false)}
+                onClick={() => { setShowClientModal(false); setEditingClient(null); }}
                 className="text-white hover:text-slate-200 font-bold"
               >
                 ✕
@@ -1613,6 +1774,39 @@ export default function SalesCRM({
                 </div>
 
                 <div>
+                  <label className="block text-slate-400 uppercase tracking-wider mb-1.5 font-bold">Contato / Proprietário</label>
+                  <input
+                    type="text"
+                    value={newClientOwner}
+                    onChange={(e) => setNewClientOwner(e.target.value)}
+                    placeholder="Nome do Proprietário"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 focus:ring-1 focus:ring-brand-light focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 uppercase tracking-wider mb-1.5 font-bold">Cidade</label>
+                  <input
+                    type="text"
+                    value={newClientCity}
+                    onChange={(e) => setNewClientCity(e.target.value)}
+                    placeholder="Ex: Sorocaba"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 focus:ring-1 focus:ring-brand-light focus:outline-none"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-slate-400 uppercase tracking-wider mb-1.5 font-bold">Endereço Comercial</label>
+                  <input
+                    type="text"
+                    value={newClientAddress}
+                    onChange={(e) => setNewClientAddress(e.target.value)}
+                    placeholder="Rua, Número, Bairro, CEP"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 focus:ring-1 focus:ring-brand-light focus:outline-none"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-slate-400 uppercase tracking-wider mb-1.5 font-bold">E-mail de Faturamento</label>
                   <input
                     type="email"
@@ -1650,10 +1844,10 @@ export default function SalesCRM({
                   onClick={handleCreateClient}
                   className="flex-1 bg-[#1e94cf] hover:bg-brand-light font-bold text-xs text-white uppercase tracking-wider py-3.5 rounded-xl transition-all"
                 >
-                  Registrar Ficha
+                  {editingClient ? 'Salvar Alterações' : 'Registrar Ficha'}
                 </button>
                 <button
-                  onClick={() => setShowClientModal(false)}
+                  onClick={() => { setShowClientModal(false); setEditingClient(null); }}
                   className="flex-1 bg-slate-100 hover:bg-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider py-3.5 rounded-xl transition-all"
                 >
                   Cancelar
@@ -1664,6 +1858,427 @@ export default function SalesCRM({
           </div>
         </div>
       )}
+
+      {/* PREMIUM FULLSCREEN INVOICE MODAL */}
+      {selectedInvoiceOrderId && (() => {
+        const order = orders.find(o => o.id === selectedInvoiceOrderId);
+        if (!order) return null;
+
+        const orderUUID = order.uuid || '9f0a7c89-234f-4f77-bb72-19a3e5c4d115';
+        const validationHash = generateSecureValidationHash(order.id, orderUUID);
+        const publicUrl = `${window.location.origin}/pedido/${order.id}`;
+
+        const handleDownloadPDF = async () => {
+          setIsDownloadingPdf(true);
+          try {
+            // Re-use and download the PRE-EXISTING PDF stored in order.pdfUrl if it's a base64 Data URI
+            if (order.pdfUrl && order.pdfUrl.startsWith('data:application/pdf')) {
+              const link = document.createElement('a');
+              link.href = order.pdfUrl;
+              link.download = `WAGON-PEDIDO-${order.id}.pdf`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            } else {
+              // Otherwise, lazily generate it right now using the canonical generator
+              const doc = await generateInvoicePDF(order, clients, products, { isDownload: false });
+              const dataUri = doc.output('datauristring');
+              
+              // Persist it under order.pdfUrl so subsequent downloads in this session or future ones will reuse the exact same static artifact
+              order.pdfUrl = dataUri;
+              const cachedOrders = localStorage.getItem('vertice_erp_orders');
+              if (cachedOrders) {
+                const allOrders: Order[] = JSON.parse(cachedOrders);
+                const index = allOrders.findIndex(o => o.id === order.id);
+                if (index !== -1) {
+                  allOrders[index].pdfUrl = dataUri;
+                  localStorage.setItem('vertice_erp_orders', JSON.stringify(allOrders));
+                }
+              }
+
+              const link = document.createElement('a');
+              link.href = dataUri;
+              link.download = `WAGON-PEDIDO-${order.id}.pdf`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            }
+          } catch (err) {
+            console.error('[Admin PDF Download Error]', err);
+          } finally {
+            setIsDownloadingPdf(false);
+          }
+        };
+
+        const handleShareWhatsApp = () => {
+          const text = encodeURIComponent(`Olá! Segue o link com a nota/comprovante do seu pedido #${order.id}: ${publicUrl}`);
+          window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
+        };
+
+        const handleShareEmail = () => {
+          const subject = encodeURIComponent(`Comprovante de Pedido - N° ${order.id}`);
+          const body = encodeURIComponent(`Olá, segue o link para acessar o comprovante eletrônico da sua compra: ${publicUrl}`);
+          window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+        };
+
+        const handleCopyLink = () => {
+          navigator.clipboard.writeText(publicUrl);
+          setCopiedLink(true);
+          setTimeout(() => setCopiedLink(false), 2000);
+        };
+
+        return (
+          <div 
+            id="printable-invoice-modal"
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-40 flex flex-col items-center justify-start animate-fade-in font-sans overflow-y-auto select-text scroll-smooth"
+          >
+            {/* STICKY HEADER ACTIONS BAR */}
+            <div className="sticky top-0 w-full bg-slate-900 border-b border-slate-800 text-white z-20 shadow-xl select-none shrink-0">
+              <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+                
+                {/* Back Button (Voltar ao Sistema) - ALWAYS VISIBLE */}
+                <button
+                  onClick={() => {
+                    setSelectedInvoiceOrderId(null);
+                  }}
+                  className="flex items-center space-x-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 transition-all font-black text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl cursor-pointer shadow-md text-nowrap select-none"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Voltar ao Sistema</span>
+                </button>
+
+                {/* Secondary Action Triggers */}
+                <div className="flex items-center space-x-1.5 sm:space-x-3">
+                  
+                  {/* PDF Download Button */}
+                  <button
+                    onClick={handleDownloadPDF}
+                    disabled={isDownloadingPdf}
+                    className="flex items-center justify-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white disabled:bg-slate-800/50 p-2.5 sm:px-4 py-2.5 rounded-xl font-black text-xs uppercase transition-all tracking-wider cursor-pointer shadow-md"
+                    title="Baixar Nota em PDF"
+                  >
+                    <Download className="h-4 w-4 text-white" />
+                    <span>{isDownloadingPdf ? 'Baixando...' : 'Baixar PDF'}</span>
+                  </button>
+
+                  {/* Share Dropdown Button */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowShareMenu(!showShareMenu)}
+                      className="flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 p-2.5 sm:px-4 py-2.5 rounded-xl font-extrabold text-xs uppercase transition-all tracking-wider border border-slate-700/50 cursor-pointer text-nowrap"
+                      title="Compartilhar Nota"
+                    >
+                      <Share2 className="h-4 w-4 text-indigo-400" />
+                      <span className="hidden sm:inline">Compartilhar</span>
+                    </button>
+
+                    {showShareMenu && (
+                      <div className="absolute right-0 mt-2 w-56 bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-2 z-30 animate-zoom-in font-extrabold text-xs text-slate-300">
+                        <div className="px-3 py-1.5 text-[9px] uppercase font-black tracking-widest text-slate-400 border-b border-slate-800/60 mb-1">
+                          Enviar Link de Acesso
+                        </div>
+                        <button
+                          onClick={() => {
+                            handleShareWhatsApp();
+                            setShowShareMenu(false);
+                          }}
+                          className="w-full flex items-center space-x-2.5 hover:bg-slate-800 p-2.5 rounded-lg transition-all text-left cursor-pointer font-bold"
+                        >
+                          <span className="text-emerald-450 text-base">💬</span>
+                          <span>WhatsApp Web</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleShareEmail();
+                            setShowShareMenu(false);
+                          }}
+                          className="w-full flex items-center space-x-2.5 hover:bg-slate-800 p-2.5 rounded-lg transition-all text-left cursor-pointer font-bold"
+                        >
+                          <Mail className="h-4 w-4 text-sky-450" />
+                          <span>Enviar por E-mail</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleCopyLink();
+                          }}
+                          className="w-full flex items-center justify-between hover:bg-slate-800 p-2.5 rounded-lg transition-all text-left cursor-pointer font-bold"
+                        >
+                          <div className="flex items-center space-x-2.5">
+                            <Link className="h-4 w-4 text-purple-400" />
+                            <span>Copiar Link</span>
+                          </div>
+                          {copiedLink && (
+                            <Check className="h-4 w-4 text-emerald-500 animate-pulse animate-duration-300" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Print Button */}
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 p-2.5 sm:px-4 py-2.5 rounded-xl font-extrabold text-xs uppercase transition-all tracking-wider border border-slate-700/50 cursor-pointer"
+                    title="Imprimir Nota de Venda"
+                  >
+                    <Printer className="h-4 w-4 text-emerald-400" />
+                    <span className="hidden sm:inline">Imprimir</span>
+                  </button>
+
+                  {/* Divider */}
+                  <div className="h-6 w-px bg-slate-800 my-auto"></div>
+
+                  {/* Close X Button */}
+                  <button
+                    onClick={() => setShowExitConfirm(true)}
+                    className="bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-400 p-2.5 rounded-xl border border-slate-700/50 transition-all cursor-pointer"
+                    title="Fechar Nota (X)"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+
+                </div>
+              </div>
+            </div>
+
+            {/* PRINT CSS RESET OVERLAY AT TOP LEVEL */}
+            <style dangerouslySetInnerHTML={{__html: `
+              @media print {
+                body * {
+                  visibility: hidden !important;
+                }
+                #printable-invoice-modal, #printable-invoice-modal * {
+                  visibility: visible !important;
+                }
+                #printable-invoice-modal {
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: 100% !important;
+                  background: white !important;
+                  color: black !important;
+                }
+                /* Hide header top action bar on print */
+                #printable-invoice-modal > div:first-of-type {
+                  display: none !important;
+                }
+              }
+            `}} />
+
+            {/* MODAL MAIN SCROLL BODY */}
+            <div className="w-full max-w-4xl px-4 py-8 space-y-6 flex-1 select-text">
+              
+              {/* STATUS CARD (Validado pela Wagon AI S.A.) */}
+              <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-3xl text-slate-900 shadow-md flex flex-col md:flex-row items-center md:justify-between gap-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-200/20 rounded-full translate-x-10 -translate-y-10" />
+
+                <div className="flex items-center space-x-4">
+                  <div className="p-3 bg-emerald-100 text-emerald-600 rounded-2xl">
+                    <CheckCircle className="h-8 w-8 text-emerald-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-black text-emerald-800 bg-emerald-200/50 px-2.5 py-1 rounded-md inline-block tracking-wider uppercase">
+                      ✅ Documento Autêntico
+                    </span>
+                    <h2 className="text-lg font-black text-slate-900">Validado pela Wagon AI S.A.</h2>
+                    <p className="text-xs text-slate-500 font-medium">Emissão Concluída: {order.date} às 10:15 UTC-3</p>
+                  </div>
+                </div>
+
+                <div className="text-left md:text-right font-medium text-xs space-y-1.5 shrink-0 bg-white/70 backdrop-blur-md p-3.5 rounded-2xl border border-emerald-100/50">
+                  <p className="text-slate-400 text-[10px] uppercase font-black tracking-wider">Assinatura de Trânsito</p>
+                  <p className="font-mono text-slate-900 font-bold text-[11px] select-all">{validationHash}</p>
+                  <p className="text-[10px] text-emerald-600 font-bold">Faturamento Direto Homologado</p>
+                </div>
+              </div>
+
+              {/* SHEETCARD */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 md:p-8 space-y-8 relative">
+                
+                {/* Title and Company Header */}
+                <div className="flex flex-col sm:flex-row justify-between items-start border-b border-dashed border-slate-200 pb-5 gap-4">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-[#1E94CF] uppercase tracking-widest pl-0.5">Nota Auxiliar Eletrônica</span>
+                    <h1 className="text-xl font-black text-slate-900">Pedido Nº {order.id}</h1>
+                    <p className="text-xs text-slate-400 font-medium">Chave: {orderUUID}</p>
+                  </div>
+                  
+                  <div className="text-left sm:text-right text-xs text-slate-500 space-y-1 font-medium">
+                    <strong className="text-slate-900 font-bold text-sm uppercase">14.571.417 Cristiane Aparecida Gonçalves</strong>
+                    <p>CNPJ: <span className="font-mono font-bold">14.571.417/0001-19</span></p>
+                    <p>IE: <span className="font-mono font-bold">001867602.00-43</span> | Situação: <span className="text-emerald-600 font-extrabold uppercase">Ativa</span></p>
+                  </div>
+                </div>
+
+                {/* GRID: RECIPIENT & REPRESENTATIVE */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                  {/* Comprador / Destinatário */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] uppercase font-black text-slate-400 block tracking-widest font-bold">Destinatário</span>
+                    <strong className="text-slate-905 font-bold text-sm block">{order.clientName}</strong>
+                    <div className="space-y-1 text-xs text-slate-500 font-medium">
+                      <p>CNPJ: <strong className="text-slate-700 font-mono">{clients.find(c => c.id === order.clientId)?.cnpj || 'Carga Dinâmica'}</strong></p>
+                      <p>Email: <strong className="text-slate-700">{clients.find(c => c.id === order.clientId)?.email || 'comercial@compras.com.br'}</strong></p>
+                      <p>Telefone: <strong className="text-slate-700">{clients.find(c => c.id === order.clientId)?.phone || '(15) 99122-4455'}</strong></p>
+                    </div>
+                  </div>
+
+                  {/* Representação comercial */}
+                  <div className="space-y-2 border-t md:border-t-0 md:border-l border-slate-200 md:pl-6 pt-4 md:pt-0">
+                    <span className="text-[10px] uppercase font-black text-slate-400 block tracking-widest font-bold">Emissor de Negócio</span>
+                    <strong className="text-slate-905 font-bold text-sm block">{order.salesRep || 'Vendedor Canal'}</strong>
+                    <div className="space-y-1 text-xs text-slate-500 font-medium">
+                      <p>Forma de Pagamento: <strong className="text-indigo-600 font-bold">{order.paymentTerm}</strong></p>
+                      <p>Canal: <strong className="text-slate-700 font-bold">Canal Atacadista S/A</strong></p>
+                      <p>Status: <span className="inline-block px-2.5 py-0.5 ml-1 rounded-md bg-amber-50 text-amber-600 border border-amber-100 text-[10px] font-black uppercase text-center">{order.status}</span></p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ITEMS TABLE */}
+                <div className="space-y-3">
+                  <span className="text-[10px] uppercase font-black text-slate-400 block tracking-widest pl-1 font-black">Relação de itens faturados</span>
+                  
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left font-sans text-xs">
+                      <thead className="bg-[#1F3767] text-white text-[9.5px] uppercase font-black">
+                        <tr>
+                          <th className="p-4 rounded-tl-2xl">Produto / Mercadoria</th>
+                          <th className="p-4 text-center">Quantidade</th>
+                          <th className="p-4 text-right">Preço Unitário</th>
+                          <th className="p-4 text-right">Descontos</th>
+                          <th className="p-4 text-right font-black rounded-tr-2xl">Total Geral</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-650">
+                        {order.items.map((item) => {
+                          const matchingProd = products.find(p => p.id === item.productId);
+                          const matchingUnit = matchingProd ? matchingProd.unit : 'un';
+                          const originalTotal = item.unitPrice * item.quantity;
+                          const discountTotal = originalTotal - item.total;
+                          const discountPercent = originalTotal > 0 ? (discountTotal / originalTotal) * 105 : 0;
+
+                          return (
+                            <tr key={item.id} className="hover:bg-slate-50/55 transition-colors">
+                              <td className="p-4">
+                                <strong className="text-slate-800 text-xs block">{item.productName}</strong>
+                                <span className="font-mono text-[9px] text-slate-400 block mt-0.5">Cod: {item.productId}</span>
+                              </td>
+                              <td className="p-4 text-center font-bold font-mono text-slate-700">
+                                {item.quantity} {matchingUnit}
+                              </td>
+                              <td className="p-4 text-right font-mono text-slate-600">
+                                R$ {item.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="p-4 text-right text-rose-500 font-mono">
+                                {discountTotal > 0 ? (
+                                  <>
+                                    -R$ {discountTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    <span className="text-[9px] font-black block">({discountPercent.toFixed(0)}% Off)</span>
+                                  </>
+                                ) : (
+                                  'R$ 0,00'
+                                )}
+                              </td>
+                              <td className="p-4 text-right font-black font-mono text-slate-800 text-xs">
+                                R$ {item.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* MATH & SUMMATIONS GRID */}
+                <div className="flex flex-col md:flex-row justify-between items-stretch gap-6 border-t border-slate-150 pt-6">
+                  {/* Left validation Stamp */}
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150 flex-1 space-y-2 text-[11px] text-slate-500 font-medium">
+                    <strong className="text-slate-800 uppercase tracking-wider text-[9px] font-black block">Declaração Legítima</strong>
+                    <p className="leading-relaxed">
+                      Este documento foi emitido e homologado sob o gateway de conformidade eletrônica de 14.571.417 Cristiane Aparecida Gonçalves com autenticação digital de hash certificado.
+                    </p>
+                    <div className="p-2.5 bg-white border border-slate-200 rounded-xl font-mono text-[9px] text-slate-650 space-y-0.5">
+                      <p>Hash Stamp: <span className="text-slate-850 font-bold">{validationHash}</span></p>
+                      <p>Conformidade: Simples Nacional (MEI)</p>
+                    </div>
+                  </div>
+
+                  {/* Right Finance total block */}
+                  <div className="w-full md:w-80 space-y-2 text-xs text-slate-600 font-medium">
+                    <div className="flex justify-between">
+                      <span>Total Bruto de Itens:</span>
+                      <span className="font-mono">R$ {order.subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between text-rose-500 font-bold">
+                      <span>Total Descontos:</span>
+                      <span className="font-mono">- R$ {(order.subtotal - order.total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] border-t border-slate-100 pt-2 text-slate-400">
+                      <span>Impostos Ativos (Provisão ICMS/IPI):</span>
+                      <span className="font-mono text-slate-600">R$ {order.taxes.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    
+                    <div className="flex justify-between items-center border-t-2 border-slate-200 pt-3 font-black text-slate-800 mt-2">
+                      <span className="text-xs uppercase tracking-wide">VALOR REAL LÍQUIDO:</span>
+                      <strong className="text-base text-emerald-600 font-black font-mono">
+                        R$ {order.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SMALL BRANDING FOOTER */}
+                <div className="text-center text-[10px] text-slate-400 space-y-1 select-none border-t border-slate-100 pt-5">
+                  <p>Documento emitido através da plataforma Wagon AI.</p>
+                  <p>Emitente: <strong>14.571.417 Cristiane Aparecida Gonçalves</strong> | CNPJ: <strong>14.571.417/0001-19</strong></p>
+                  <p>Este portal é certified em nível bancário de conformidade com criptografia de ponta-a-ponta.</p>
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* EXIT CONFIRMATION OVERLAY MODAL */}
+            {showExitConfirm && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fade-in select-none">
+                <div className="bg-white rounded-3xl p-6 max-w-sm w-full border border-slate-100 shadow-2xl space-y-4 animate-zoom-in text-slate-900">
+                  <div className="text-center space-y-2">
+                    <div className="mx-auto w-12 h-12 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center border border-amber-100">
+                      <AlertTriangle className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-sm font-black uppercase tracking-wide">Deseja fechar a visualização da nota?</h3>
+                    <p className="text-xs text-slate-500 font-bold leading-relaxed">
+                      Você pode continuar revisando ou retornar à tela de pedidos.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2 pt-2">
+                    <button
+                      onClick={() => {
+                        setShowExitConfirm(false);
+                      }}
+                      className="w-full bg-[#1e94cf] hover:bg-sky-600 text-white font-black text-xs uppercase tracking-wider py-3 rounded-xl cursor-pointer transition-all"
+                    >
+                      Continuar visualizando
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowExitConfirm(false);
+                        setSelectedInvoiceOrderId(null);
+                      }}
+                      className="w-full bg-slate-100 hover:bg-slate-205 text-slate-650 border border-slate-200 font-black text-xs uppercase tracking-wider py-3 rounded-xl cursor-pointer transition-all"
+                    >
+                      Fechar nota
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
 
     </div>
   );
