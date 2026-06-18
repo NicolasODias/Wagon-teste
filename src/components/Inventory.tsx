@@ -687,7 +687,7 @@ export default function Inventory({
               <select
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
-                className="bg-white border border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-1 focus:ring-brand-light cursor-pointer"
+                className="w-full sm:w-auto bg-white border border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-1 focus:ring-brand-light cursor-pointer"
               >
                 <option value="all">Todas as Categorias</option>
                 {categories.map(c => (
@@ -699,7 +699,7 @@ export default function Inventory({
               <select
                 value={safetyFilter}
                 onChange={(e) => setSafetyFilter(e.target.value)}
-                className="bg-white border border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-1 focus:ring-brand-light cursor-pointer"
+                className="w-full sm:w-auto bg-white border border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-1 focus:ring-brand-light cursor-pointer"
               >
                 <option value="all">Filtro de Saldo (Todos)</option>
                 <option value="normal">Estoque Confortável</option>
@@ -713,7 +713,7 @@ export default function Inventory({
           </div>
 
           {/* MAIN PRODUCT TABLE (Completamente Reestruturada) */}
-          <div className="overflow-x-auto w-full">
+          <div className="overflow-x-auto w-full mobile-card-table inventory-products-table">
             {filteredProducts.length > 0 ? (
               <table className="w-full text-left font-sans text-xs border-collapse">
                 <thead>
@@ -922,7 +922,7 @@ export default function Inventory({
             </div>
 
             {/* TABLE OF REGISTERS */}
-            <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+            <div className="overflow-x-auto border border-slate-100 rounded-2xl mobile-card-table inventory-audit-table">
               <table className="w-full text-left text-xs font-semibold text-slate-650">
                 <thead className="bg-slate-50 text-slate-450 text-[10px] uppercase font-black tracking-wider border-b border-slate-150">
                   <tr>

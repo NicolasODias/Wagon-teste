@@ -404,7 +404,7 @@ Focando na nossa operação executiva, os principais dados de governança fiscal
   };
 
   return (
-    <div className="min-h-screen bg-[#080d1a] text-slate-100 rounded-3xl overflow-hidden border border-cyan-900/30 shadow-[0_0_50px_rgba(6,182,212,0.1)] flex flex-col font-mono text-xs relative">
+    <div className="virtual-cfo-panel min-h-[calc(100dvh-8rem)] lg:min-h-screen bg-[#080d1a] text-slate-100 rounded-2xl lg:rounded-3xl overflow-hidden border border-cyan-900/30 shadow-[0_0_50px_rgba(6,182,212,0.1)] flex flex-col font-mono text-xs relative">
       
       {/* Sci-Fi Ambient Vector Mesh background overlays */}
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(6,182,212,0.06),transparent_40%)] pointer-events-none" />
@@ -950,7 +950,7 @@ Focando na nossa operação executiva, os principais dados de governança fiscal
         </div>
 
         {/* RIGHT COLUMN: INTERACTIVE CYBERNETIC COGNITIVE CONSOLE (CHATBOT) */}
-        <div className="w-full lg:w-[42%] bg-[#040811]/90 border-t lg:border-t-0 p-6 flex flex-col min-h-[480px] h-[650px] lg:h-auto overflow-hidden relative">
+        <div className="w-full lg:w-[42%] bg-[#040811]/90 border-t lg:border-t-0 p-4 sm:p-6 flex flex-col min-h-[420px] h-[560px] sm:h-[650px] lg:h-auto overflow-hidden relative">
           
           <div className="flex items-center justify-between pb-3.5 border-b border-cyan-950/65 shrink-0">
             <div className="flex items-center space-x-2">

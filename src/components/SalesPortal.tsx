@@ -1007,7 +1007,7 @@ export default function SalesPortal({
                     )}
                   </div>
 
-                  <div className="pt-4 border-t border-slate-800/80 flex justify-between">
+                  <div className="pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row justify-between gap-2">
                     <div></div>
                     <button
                       type="button"
@@ -1120,7 +1120,7 @@ export default function SalesPortal({
                     )}
                   </div>
 
-                  <div className="pt-4 border-t border-slate-800/80 flex justify-between">
+                  <div className="pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row justify-between gap-2">
                     <button
                       type="button"
                       onClick={() => setWizardStep(1)}
@@ -1154,7 +1154,7 @@ export default function SalesPortal({
                   </div>
 
                   {/* Cart review table */}
-                  <div className="border border-slate-800/80 rounded-xl overflow-hidden bg-slate-950/20">
+                  <div className="border border-slate-800/80 rounded-xl overflow-hidden bg-slate-950/20 mobile-card-table sales-cart-table">
                     <table className="w-full text-left font-sans text-xs">
                       <thead className="bg-slate-900 border-b border-slate-800 text-[9.5px] uppercase font-black text-slate-500">
                         <tr>
@@ -1497,7 +1497,7 @@ export default function SalesPortal({
                           <h5 className="text-[10.5px] uppercase font-black tracking-wider text-slate-205">Itens Selecionados ({cart.length} SKUs)</h5>
                         </div>
 
-                        <div className="overflow-x-auto p-0.5">
+                        <div className="overflow-x-auto p-0.5 mobile-card-table sales-review-table">
                           <table className="w-full text-left font-sans text-xs">
                             <thead className="bg-slate-900 border-b border-slate-800 text-[9px] uppercase font-bold text-slate-500">
                               <tr>
@@ -1980,7 +1980,7 @@ export default function SalesPortal({
                 <div className="space-y-2">
                   <span className="text-[10px] uppercase font-black text-slate-405 block tracking-wider pl-1 font-bold">Relação de Bens e Produtos Faturados</span>
                   
-                  <div className="border border-slate-200/80 rounded-xl overflow-hidden">
+                  <div className="border border-slate-200/80 rounded-xl overflow-hidden mobile-card-table invoice-items-table">
                     <table className="w-full text-left font-sans text-xs">
                       <thead className="bg-slate-55 border-b border-slate-205 text-[9.5px] uppercase font-black text-slate-500">
                         <tr>

@@ -340,7 +340,7 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
   };
 
   return (
-    <div className="min-h-screen w-screen flex overflow-hidden bg-[#F5F7FB] font-sans text-[#1e293b]">
+    <div className="login-shell min-h-screen w-screen flex overflow-hidden bg-[#F5F7FB] font-sans text-[#1e293b]">
       
       {/* LEFT SIDE: Premium visual abstract panel (Hidden on mobile) */}
       <div className="hidden lg:flex lg:w-1/2 relative bg-[#1F3767] text-white flex-col justify-between overflow-hidden p-12 select-none">
@@ -447,7 +447,7 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
       </div>
 
       {/* RIGHT SIDE: Card Glassmorphic Login Area */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 md:p-12 bg-radial from-slate-100 to-[#F5F7FB] relative">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-6 md:p-12 bg-radial from-slate-100 to-[#F5F7FB] relative overflow-y-auto">
         
         {/* Decorative Grid for mobile/tablet backdrops */}
         <div className="absolute inset-0 z-0 lg:hidden opacity-5 pointer-events-none">
@@ -479,7 +479,7 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
           {/* Form Card */}
           <motion.div 
             layout
-            className="glass-light backdrop-blur-xl border border-white/85 p-8 md:p-10 rounded-3xl shadow-2xl relative overflow-hidden bg-white/80"
+            className="glass-light backdrop-blur-xl border border-white/85 p-5 sm:p-8 md:p-10 rounded-3xl shadow-2xl relative overflow-hidden bg-white/80"
           >
             {/* Subtle light-bar top highlights */}
             <div className="absolute top-0 inset-x-0 h-[2px] bg-gradient-to-r from-[#1E94CF] via-[#1F3767] to-[#8BC039]" />

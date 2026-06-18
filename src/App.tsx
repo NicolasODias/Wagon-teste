@@ -1321,10 +1321,10 @@ export default function App() {
   // 3. Render SalesPortal for Vendedores (and Admin in Seller-Mode)
   if (userPortal === 'vendedor') {
     return (
-      <div className={`flex h-screen w-screen overflow-hidden font-sans antialiased p-2 sm:p-4 absolute inset-0 z-50 ${
+      <div className={`app-shell seller-shell flex h-screen w-screen overflow-hidden font-sans antialiased p-2 sm:p-4 absolute inset-0 z-50 ${
         theme === 'dark' ? 'bg-[#0F172A] text-slate-100' : 'bg-[#e2e8f0]/40 text-slate-800'
       }`}>
-        <div className="absolute top-6 right-10 z-20 flex items-center space-x-3">
+        <div className="seller-actions absolute top-3 right-3 sm:top-6 sm:right-10 z-20 flex items-center gap-2 sm:gap-3">
           {currentUser.role === 'ADMIN' ? (
             <button
               onClick={() => setUserPortal('admin')}
@@ -1367,7 +1367,7 @@ export default function App() {
   }
 
   return (
-    <div className={`flex h-screen w-screen overflow-hidden font-sans antialiased transition-colors duration-300 ${
+    <div className={`app-shell flex h-screen w-screen overflow-hidden font-sans antialiased transition-colors duration-300 ${
       theme === 'dark' ? 'bg-[#0F172A] text-slate-100' : 'bg-[#f8fafc] text-slate-850'
     }`}>
       
@@ -1388,10 +1388,10 @@ export default function App() {
       />
 
       {/* Main Viewport */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden relative min-w-0">
         
         {/* Navigation Topbar */}
-        <header id="topbar" className={`h-16 shrink-0 flex items-center justify-between px-4 md:px-8 z-20 border-b transition-colors duration-300 ${
+        <header id="topbar" className={`mobile-topbar h-16 shrink-0 flex items-center justify-between px-4 md:px-8 z-20 border-b transition-colors duration-300 ${
           theme === 'dark' ? 'bg-[#111827] border-slate-800/80 text-white' : 'bg-white border-slate-100 shadow-xs'
         }`}>
           
@@ -1455,7 +1455,7 @@ export default function App() {
         </header>
 
         {/* Dynamic transition viewport viewport */}
-        <main className={`flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6 pb-24 lg:pb-6 z-10 transition-colors duration-300 ${
+        <main className={`mobile-main flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6 pb-24 lg:pb-6 z-10 transition-colors duration-300 ${
           theme === 'dark' ? 'bg-[#0F172A]' : 'bg-[#f8fafc]'
         }`}>
           <AnimatePresence mode="wait">
@@ -1608,14 +1608,14 @@ export default function App() {
             setActiveTab('pipeline');
             setSalesSubTab('new-order');
           }}
-          className="lg:hidden fixed bottom-20 right-4 z-45 bg-gradient-to-r from-[#1E94CF] to-[#8BC039] text-white p-3.5 rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all font-black uppercase text-[10px] tracking-wider outline-none border-none cursor-pointer hover:brightness-110"
+          className="mobile-fab lg:hidden fixed bottom-20 right-4 z-45 bg-gradient-to-r from-[#1E94CF] to-[#8BC039] text-white p-3.5 rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all font-black uppercase text-[10px] tracking-wider outline-none border-none cursor-pointer hover:brightness-110"
           title="Nova Venda"
         >
           <span className="text-sm mr-1 font-bold">+</span> Nova Venda
         </button>
 
         {/* BOTTOM FIXED INTERFERENCE FOR MOBILE NAVIGATION */}
-        <nav className={`lg:hidden fixed bottom-0 left-0 right-0 h-16 border-t z-50 flex items-center justify-around px-2 ${
+        <nav className={`mobile-bottom-nav lg:hidden fixed bottom-0 left-0 right-0 h-16 border-t z-50 flex items-center justify-around px-2 ${
           theme === 'dark' 
             ? 'bg-[#111827] border-slate-850 text-slate-400' 
             : 'bg-white border-slate-200 text-slate-500 shadow-[0_-3px_15px_rgba(0,0,0,0.06)]'

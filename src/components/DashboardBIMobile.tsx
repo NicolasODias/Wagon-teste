@@ -84,7 +84,7 @@ export default function DashboardBIMobile({
   const getDaysDiffForChart = (dateStr: string) => {
     if (!dateStr) return 999;
     const targetDate = dateStr.split('T')[0];
-    const todayStr = '2026-06-03';
+    const todayStr = new Date().toISOString().split('T')[0];
     const time1 = new Date(targetDate).getTime();
     const time2 = new Date(todayStr).getTime();
     return Math.floor((time2 - time1) / (1000 * 60 * 60 * 24));
@@ -140,10 +140,10 @@ export default function DashboardBIMobile({
   };
 
   return (
-    <div className="space-y-4 animate-fade-in pb-12 block lg:hidden">
+    <div className="mobile-dashboard space-y-4 animate-fade-in pb-12 block lg:hidden">
       
       {/* Dynamic Greeting Header */}
-      <div className={`p-4 rounded-xl border flex flex-col gap-3 transition-colors ${
+      <div className={`p-4 rounded-2xl border flex flex-col gap-3 transition-colors ${
         isDark ? 'glass-dark border-slate-800' : 'glass-light border-slate-100 shadow-sm'
       }`}>
         <div className="flex items-center justify-between">

@@ -256,7 +256,7 @@ export default function PublicInvoicePortal({ currentPath, onNavigate }: PublicI
           <div className="space-y-3">
             <span className="text-[10px] uppercase font-black text-slate-400 block tracking-widest pl-1 font-bold">Relação de itens faturados</span>
             
-            <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm">
+            <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm mobile-card-table invoice-items-table">
               <table className="w-full text-left font-sans text-xs">
                 <thead className="bg-[#1F3767] text-white text-[9.5px] uppercase font-bold">
                   <tr>

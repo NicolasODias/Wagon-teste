@@ -473,10 +473,10 @@ export default function SalesCRM({
         </div>
 
         {/* Tab Controls */}
-        <div className="flex bg-slate-100 p-1.5 rounded-xl border border-slate-200/70 text-xs self-start sm:self-center font-medium">
+        <div className="flex w-full sm:w-auto overflow-x-auto bg-slate-100 p-1.5 rounded-xl border border-slate-200/70 text-xs self-start sm:self-center font-medium mobile-tab-scroll">
           <button
             onClick={() => { setActiveSubTab('pipeline'); setBillingOrderId(null); }}
-            className={`flex items-center space-x-1.5 px-4 py-2.5 rounded-lg transition-transform ${
+            className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2.5 rounded-lg transition-transform shrink-0 ${
               activeSubTab === 'pipeline' ? 'bg-white text-brand-dark shadow-sm font-bold' : 'text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -485,7 +485,7 @@ export default function SalesCRM({
           </button>
           <button
             onClick={() => { setActiveSubTab('crm'); setBillingOrderId(null); }}
-            className={`flex items-center space-x-1.5 px-4 py-2.5 rounded-lg transition-transform ${
+            className={`flex items-center space-x-1.5 px-3 sm:px-4 py-2.5 rounded-lg transition-transform shrink-0 ${
               activeSubTab === 'crm' ? 'bg-white text-brand-dark shadow-sm font-bold' : 'text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -494,7 +494,7 @@ export default function SalesCRM({
           </button>
           <button
             onClick={() => { setActiveSubTab('new-order'); setBillingOrderId(null); }}
-            className="flex items-center space-x-1.5 px-4 py-2.5 bg-[#1E94CF] text-white rounded-lg font-bold hover:bg-[#1a85bc] transition-all ml-1"
+            className="flex items-center space-x-1.5 px-3 sm:px-4 py-2.5 bg-[#1E94CF] text-white rounded-lg font-bold hover:bg-[#1a85bc] transition-all ml-1 shrink-0"
           >
             <Plus className="h-4 w-4" />
             <span>Novo Pedido de Venda</span>
@@ -834,7 +834,7 @@ export default function SalesCRM({
               </div>
 
               {/* Filters grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2 text-xs">
                  {/* Status Filter */}
                  <div className="space-y-1">
                    <label className="text-[10px] font-bold text-slate-450 uppercase tracking-wider block">Status</label>
@@ -1389,7 +1389,7 @@ export default function SalesCRM({
                             </div>
                             
                             {purchasedProducts.length > 0 ? (
-                              <div className="border border-slate-100 rounded-xl overflow-hidden text-xs">
+                              <div className="border border-slate-100 rounded-xl overflow-hidden text-xs mobile-card-table crm-purchased-table">
                                 <table className="w-full text-left">
                                   <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase border-b border-slate-100 p-2">
                                     <tr>
@@ -1592,7 +1592,7 @@ export default function SalesCRM({
             {/* Current Shopping Basket List */}
             <div className="space-y-2.5">
               <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Produtos Escolhidos</label>
-              <div className="border border-slate-100 rounded-xl overflow-hidden shadow-inner">
+              <div className="border border-slate-100 rounded-xl overflow-hidden shadow-inner mobile-card-table crm-basket-table">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 font-black text-slate-500 text-[10px] uppercase">
                     <tr>
@@ -2139,7 +2139,7 @@ export default function SalesCRM({
                 <div className="space-y-3">
                   <span className="text-[10px] uppercase font-black text-slate-400 block tracking-widest pl-1 font-black">Relação de itens faturados</span>
                   
-                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm mobile-card-table invoice-items-table">
                     <table className="w-full text-left font-sans text-xs">
                       <thead className="bg-[#1F3767] text-white text-[9.5px] uppercase font-black">
                         <tr>

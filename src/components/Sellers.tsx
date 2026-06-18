@@ -414,7 +414,7 @@ export default function Sellers({
         </div>
 
         {/* Sales Agents Table */}
-        <div className="border border-slate-100 rounded-xl overflow-hidden">
+        <div className="border border-slate-100 rounded-xl overflow-hidden mobile-card-table sellers-table-mobile">
           <table className="w-full text-left font-sans text-xs">
             <thead className="bg-slate-50 border-b border-slate-100 text-[10px] uppercase font-black text-slate-400">
               <tr>
@@ -942,7 +942,7 @@ export default function Sellers({
                       {/* Sub-table showing individual commissions */}
                       <div className="pt-3 border-t border-slate-100/80 space-y-2">
                         <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Histórico de Parcelas de Comissão</span>
-                        <div className="overflow-x-auto max-h-48 overflow-y-auto pr-1">
+                        <div className="overflow-x-auto max-h-48 overflow-y-auto pr-1 mobile-card-table seller-commission-table">
                           <table className="w-full text-left text-[11px]">
                             <thead>
                               <tr className="text-slate-400 font-bold border-b border-slate-100 uppercase text-[9px] tracking-wider">

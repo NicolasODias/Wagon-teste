@@ -930,7 +930,7 @@ export default function Finance({
           </div>
 
           {/* Controls: Search queries + Status switches */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
             
             {/* Search Input bar */}
             <div className="relative">
@@ -940,7 +940,7 @@ export default function Finance({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Buscar cliente, id..."
-                className="bg-white border border-slate-200 pl-8 pr-3 py-1.5 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-brand-light text-slate-700 w-48 transition-all"
+                className="w-full sm:w-48 bg-white border border-slate-200 pl-8 pr-3 py-2 sm:py-1.5 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-brand-light text-slate-700 transition-all"
               />
             </div>
 
@@ -970,7 +970,7 @@ export default function Finance({
         </div>
 
         {/* The data table */}
-        <div className="overflow-x-auto w-full font-semibold">
+        <div className="overflow-x-auto w-full font-semibold mobile-card-table finance-table-mobile">
           {(financeActiveTab === 'receber' ? filteredReceivables : filteredPayables).length > 0 ? (
             <table className="w-full text-left font-sans text-xs border-collapse">
               <thead>
