@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { supabase, isSupabaseConfigured, getSupabaseErrorMsg } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured, getSupabaseErrorMsg, supabaseConfigDebug } from '../lib/supabaseClient';
 import { 
   Building2, 
   Mail, 
@@ -162,6 +162,13 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
         }
 
       } else {
+        if (window.location.hostname.includes('vercel.app')) {
+          console.error('[Wagon AI Supabase] Variaveis VITE nao foram injetadas no build:', supabaseConfigDebug);
+          throw new Error(
+            'Supabase nao foi carregado neste deploy. Confira VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY na Vercel e faca Redeploy sem cache.'
+          );
+        }
+
         // Fallback local API
         const res = await fetch('/api/auth/login', {
           method: 'POST',
@@ -171,10 +178,15 @@ export default function LoginPremium({ onLoginSuccess, theme }: LoginPremiumProp
           body: JSON.stringify({ email: sanitizedEmail, password }),
         });
 
-        const data = await res.json();
+        const contentType = res.headers.get('content-type') || '';
+        const data = contentType.includes('application/json') ? await res.json() : null;
 
         if (!res.ok) {
-          throw new Error(data.error || 'Falha na autenticação.');
+          throw new Error(data?.error || 'Falha na autenticação.');
+        }
+
+        if (!data) {
+          throw new Error('A API local nao retornou JSON. Configure o Supabase ou publique o backend junto com o app.');
         }
 
         // Remember credentials if checked

@@ -5,11 +5,18 @@ const supabaseUrl = ((import.meta as any).env?.VITE_SUPABASE_URL as string) || '
 const supabaseAnonKey = ((import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder';
 
 // Check if variables are valid and not placeholders
-export const isSupabaseConfigured = 
+export const isSupabaseConfigured = Boolean(
   supabaseUrl && 
   supabaseAnonKey && 
   !supabaseUrl.includes('placeholder-project') && 
-  !supabaseAnonKey.includes('placeholder');
+  !supabaseAnonKey.includes('placeholder')
+);
+
+export const supabaseConfigDebug = {
+  configured: isSupabaseConfigured,
+  url: supabaseUrl,
+  anonKeyPresent: Boolean(supabaseAnonKey && !supabaseAnonKey.includes('placeholder')),
+};
 
 let supabaseClientInstance: SupabaseClient | null = null;
 
@@ -23,7 +30,8 @@ try {
   });
   console.log('[Wagon AI Supabase] Client initialized successfully.', {
     configured: isSupabaseConfigured,
-    url: supabaseUrl
+    url: supabaseUrl,
+    anonKeyPresent: supabaseConfigDebug.anonKeyPresent
   });
 } catch (error) {
   console.error('[Wagon AI Supabase] Failed to initialize client:', error);
