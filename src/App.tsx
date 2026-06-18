@@ -1404,7 +1404,7 @@ export default function App() {
                   ? 'bg-slate-900 border-slate-850 text-slate-200'
                   : 'bg-slate-50 border-slate-205 text-[#1F3767]'
               }`}
-              title="Abrir marcas"
+              title="Abrir menu"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
@@ -1455,7 +1455,7 @@ export default function App() {
         </header>
 
         {/* Dynamic transition viewport viewport */}
-        <main className={`mobile-main flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6 pb-24 lg:pb-6 z-10 transition-colors duration-300 ${
+        <main className={`mobile-main flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6 pb-6 z-10 transition-colors duration-300 ${
           theme === 'dark' ? 'bg-[#0F172A]' : 'bg-[#f8fafc]'
         }`}>
           <AnimatePresence mode="wait">
@@ -1608,47 +1608,11 @@ export default function App() {
             setActiveTab('pipeline');
             setSalesSubTab('new-order');
           }}
-          className="mobile-fab lg:hidden fixed bottom-20 right-4 z-45 bg-gradient-to-r from-[#1E94CF] to-[#8BC039] text-white p-3.5 rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all font-black uppercase text-[10px] tracking-wider outline-none border-none cursor-pointer hover:brightness-110"
+          className="mobile-fab lg:hidden fixed bottom-4 right-4 z-45 bg-gradient-to-r from-[#1E94CF] to-[#8BC039] text-white p-3.5 rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all font-black uppercase text-[10px] tracking-wider outline-none border-none cursor-pointer hover:brightness-110"
           title="Nova Venda"
         >
           <span className="text-sm mr-1 font-bold">+</span> Nova Venda
         </button>
-
-        {/* BOTTOM FIXED INTERFERENCE FOR MOBILE NAVIGATION */}
-        <nav className={`mobile-bottom-nav lg:hidden fixed bottom-0 left-0 right-0 h-16 border-t z-50 flex items-center justify-around px-2 ${
-          theme === 'dark' 
-            ? 'bg-[#111827] border-slate-850 text-slate-400' 
-            : 'bg-white border-slate-200 text-slate-500 shadow-[0_-3px_15px_rgba(0,0,0,0.06)]'
-        }`}>
-          {[
-            { id: 'dashboard', label: 'Monitor', icon: LayoutDashboard },
-            { id: 'finance', label: 'Finanças', icon: DollarSign },
-            { id: 'inventory', label: 'Estoque', icon: Boxes },
-            { id: 'crm', label: 'Clientes', icon: Users },
-            { id: 'virtualCFO', label: 'CFO IA', icon: Cpu },
-          ].map((tab) => {
-            const IconComp = tab.icon;
-            const isCurrent = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActiveTab(tab.id);
-                  if (tab.id === 'crm') setSalesSubTab('crm');
-                  if (tab.id === 'pipeline') setSalesSubTab('pipeline');
-                }}
-                className={`flex flex-col items-center justify-center flex-1 py-1.5 transition-all text-center min-h-[44px] min-w-[44px] active:scale-95 ${
-                  isCurrent
-                    ? theme === 'dark' ? 'text-[#1E94CF]' : 'text-[#1E94CF]'
-                    : 'text-slate-400 dark:text-slate-500'
-                }`}
-              >
-                <IconComp className={`h-5 w-5 ${isCurrent ? 'scale-110 mb-0.5' : 'mb-0.5'}`} />
-                <span className="text-[9px] font-black tracking-tight">{tab.label}</span>
-              </button>
-            );
-          })}
-        </nav>
 
       </div>
     </div>

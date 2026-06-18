@@ -44,3 +44,20 @@ Para publicar no Vercel:
 3. Faça um novo deploy, de preferência com redeploy sem cache se a interface antiga persistir.
 
 Observação: o arquivo `.env` local não foi incluído neste pacote para evitar expor chaves. Use as variáveis já configuradas na Vercel.
+
+## Ajuste solicitado: navegação mobile somente pela barra lateral
+
+- Removida a barra de navegação inferior fixa no mobile.
+- Mantido o menu lateral como navegação principal no celular, acionado pelo botão hambúrguer do topo.
+- Reposicionado o botão flutuante `Nova Venda` para não depender da antiga barra inferior.
+- Reduzido o espaçamento inferior antes reservado para a barra inferior e mantida área de respiro para o botão flutuante.
+- Adicionado bloqueio de enquadramento mobile para grids, cards, formulários e blocos internos, evitando estouro horizontal.
+- Melhorado o comportamento dos cards/tabelas mobile com quebra de texto e limite de largura nos valores.
+- Corrigido o título do botão hambúrguer para `Abrir menu`.
+
+Validação executada:
+
+```bash
+npm run lint
+npm run build
+```
