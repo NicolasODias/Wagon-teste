@@ -143,7 +143,11 @@ export default function DashboardBI({
       const filterDateForReport = (dateStr: string) => {
         if (!dateStr) return false;
         const targetDate = dateStr.split('T')[0];
-        const todayStr = '2026-06-03';
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+        const currentMonthStr = todayStr.slice(0, 7);
+        const previousMonthStr = new Date(today.getFullYear(), today.getMonth() - 1, 1).toISOString().slice(0, 7);
+        const currentYearStr = String(today.getFullYear());
 
         const getDaysDiff = (d1: string, d2: string) => {
           const time1 = new Date(d1).getTime();
@@ -167,13 +171,13 @@ export default function DashboardBI({
           return diff >= 0 && diff <= 30;
         }
         if (reportPeriod === 'Este mês') {
-          return targetDate.startsWith('2026-06') || (targetDate >= '2026-06-01' && targetDate <= '2026-06-30');
+          return targetDate.startsWith(currentMonthStr);
         }
         if (reportPeriod === 'Mês anterior') {
-          return targetDate.startsWith('2026-05');
+          return targetDate.startsWith(previousMonthStr);
         }
         if (reportPeriod === 'Este ano') {
-          return targetDate.startsWith('2026');
+          return targetDate.startsWith(currentYearStr);
         }
         if (reportPeriod === 'Personalizado') {
           if (!reportStartDate && !reportEndDate) return true;
@@ -247,8 +251,8 @@ export default function DashboardBI({
         id: `REP-${Math.floor(10000 + Math.random() * 90000)}`,
         name: reportFileName,
         period: reportPeriod,
-        startDate: reportStartDate || '2026-06-01',
-        endDate: reportEndDate || '2026-06-30',
+        startDate: reportStartDate || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0],
+        endDate: reportEndDate || today.toISOString().split('T')[0],
         createdAt: today.toISOString(),
         adminName: 'Edilson Mesquita',
         metrics: {
@@ -282,7 +286,7 @@ export default function DashboardBI({
     }
   };
 
-  // Universal Filter Helper (Reference: '2026-06-03' is today)
+  // Universal Filter Helper based on the real current date.
   const isDateInPeriod = (
     dateStr: string,
     period: string,
@@ -291,7 +295,10 @@ export default function DashboardBI({
   ): boolean => {
     if (!dateStr) return false;
     const targetDate = dateStr.split('T')[0];
-    const todayStr = '2026-06-03';
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const currentMonthStr = todayStr.slice(0, 7);
+    const currentYearStr = String(today.getFullYear());
 
     const getDaysDiff = (d1: string, d2: string) => {
       const time1 = new Date(d1).getTime();
@@ -315,14 +322,14 @@ export default function DashboardBI({
       return diff >= 0 && diff <= 30;
     }
     if (period === 'Este mês') {
-      return targetDate.startsWith('2026-06') || (targetDate >= '2026-06-01' && targetDate <= '2026-06-30');
+      return targetDate.startsWith(currentMonthStr);
     }
     if (period === 'Últimos 3 meses') {
       const diff = getDaysDiff(targetDate, todayStr);
       return diff >= 0 && diff <= 90;
     }
     if (period === 'Este ano') {
-      return targetDate.startsWith('2026');
+      return targetDate.startsWith(currentYearStr);
     }
     if (period === 'Personalizado') {
       if (!customStart && !customEnd) return true;
@@ -406,7 +413,7 @@ export default function DashboardBI({
       id: 'faturamento',
       label: 'Receita (Faturamento)',
       value: totalFaturamento,
-      prior: 16500.00,
+      prior: 0,
       icon: DollarSign,
       tooltip: 'Faturamento bruto acumulado das notas mercantis autorizadas pelo fisco.',
       isIncreaseGood: true,
@@ -418,7 +425,7 @@ export default function DashboardBI({
       id: 'lucro',
       label: 'Lucro Líquido',
       value: calculatedLucroVal,
-      prior: 4080.00,
+      prior: 0,
       icon: TrendingUp,
       tooltip: 'Margem superavitária após as deduções de custo de aquisição e tributação mercantil.',
       isIncreaseGood: true,
@@ -430,7 +437,7 @@ export default function DashboardBI({
       id: 'caixaFisico',
       label: 'Caixa Físico',
       value: physicalCashVal,
-      prior: 12200.00,
+      prior: 0,
       icon: Wallet,
       tooltip: 'Soma física mantida em cofre estratégico central para micro despesas urgentes.',
       isIncreaseGood: true,
@@ -442,7 +449,7 @@ export default function DashboardBI({
       id: 'saldoBancario',
       label: 'Saldo Bancário',
       value: bankBalance,
-      prior: 132000.00,
+      prior: 0,
       icon: Landmark,
       tooltip: 'Aporte de liquidez disponível para saque e custeio das operações correntes.',
       isIncreaseGood: true,
@@ -454,7 +461,7 @@ export default function DashboardBI({
       id: 'fluxoCaixaReal',
       label: 'Fluxo de Caixa Operacional',
       value: totalReceitasPagas - totalDespesasPagas,
-      prior: 18000.00,
+      prior: 0,
       icon: Activity,
       tooltip: 'Entradas líquidas acumuladas menos as Saídas registradas no período selecionado.',
       isIncreaseGood: (totalReceitasPagas - totalDespesasPagas) >= 0,
@@ -469,7 +476,7 @@ export default function DashboardBI({
       id: 'vendas',
       label: 'Vendas Ativas',
       value: totalVendas,
-      prior: 3,
+      prior: 0,
       icon: ShoppingCart,
       tooltip: 'Volume absoluto de faturamento de pedidos processados no ciclo operacional.',
       isIncreaseGood: true,
@@ -481,7 +488,7 @@ export default function DashboardBI({
       id: 'ticketMedio',
       label: 'Ticket Médio',
       value: ticketMedioVal,
-      prior: 5500.00,
+      prior: 0,
       icon: Percent,
       tooltip: 'Faturamento bruto por emissão mercantil média realizada no período corporativo.',
       isIncreaseGood: true,
@@ -493,7 +500,7 @@ export default function DashboardBI({
       id: 'comissaoAPagar',
       label: 'Comissão a Pagar',
       value: comissaoAPagar,
-      prior: 450.00,
+      prior: 0,
       icon: Coins,
       tooltip: 'Soma total de comissões calculadas pendentes de quitação.',
       isIncreaseGood: false,
@@ -505,7 +512,7 @@ export default function DashboardBI({
       id: 'comissaoPaga',
       label: 'Comissão Paga',
       value: comissaoPaga,
-      prior: 12000.00,
+      prior: 0,
       icon: Coins,
       tooltip: 'Soma total de comissões integralizadas já pagas aos vendedores.',
       isIncreaseGood: true,
@@ -517,7 +524,7 @@ export default function DashboardBI({
       id: 'clientes',
       label: 'Clientes Ativos',
       value: clients.length,
-      prior: 5,
+      prior: 0,
       icon: UserCheck,
       tooltip: 'Contas jurídicas catalogadas no CRM com relacionamento comercial ativo.',
       isIncreaseGood: true,
@@ -532,7 +539,7 @@ export default function DashboardBI({
       id: 'estoque',
       label: 'Estoque Balanço',
       value: valorEstoque,
-      prior: 21800.00,
+      prior: 0,
       icon: Boxes,
       tooltip: 'Patrimônio físico avaliado a preço de custo estocado nas gôndolas e armários.',
       isIncreaseGood: true,
@@ -544,7 +551,7 @@ export default function DashboardBI({
       id: 'consignados',
       label: 'Ativos Consignados',
       value: ativosConsignados,
-      prior: 41000.00,
+      prior: 0,
       icon: Briefcase,
       tooltip: 'Comodatos de infraestrutura cedidos aos nossos varejistas de alto nível.',
       isIncreaseGood: true,
@@ -556,7 +563,7 @@ export default function DashboardBI({
       id: 'pedidos',
       label: 'Pedidos Pendentes',
       value: orders.filter(o => o.status !== 'Entregue').length,
-      prior: 1,
+      prior: 0,
       icon: Activity,
       tooltip: 'Número de requisições de compra mercantil atualmente correndo no lote logístico.',
       isIncreaseGood: false,
@@ -568,7 +575,7 @@ export default function DashboardBI({
       id: 'impostos',
       label: 'Impostos',
       value: totalImpostos,
-      prior: 17200.00,
+      prior: 0,
       icon: Receipt,
       tooltip: 'Provisões tributárias ativas (ICMS, PIS, COFINS, etc.) retidas em caixa social.',
       isIncreaseGood: false,
@@ -579,7 +586,7 @@ export default function DashboardBI({
   ];
 
   // Dynamic calculation for the AI Insights Panel (Premium Executive Hub)
-  const highestOrderValue = filteredOrders.length > 0 ? Math.max(...filteredOrders.map(o => o.total)) : 4850;
+  const highestOrderValue = filteredOrders.length > 0 ? Math.max(...filteredOrders.map(o => o.total)) : 0;
   const highestOrder = filteredOrders.find(o => o.total === highestOrderValue);
   const topClientNameStr = highestOrder ? highestOrder.clientName : (clients[0]?.name || "Nenhum Comitente");
 
@@ -597,7 +604,7 @@ export default function DashboardBI({
       bestSellingProductId = id;
     }
   });
-  const bestSellingProduct = products.find(p => p.id === bestSellingProductId)?.name || 'Café Bourbon Speciale';
+  const bestSellingProduct = products.find(p => p.id === bestSellingProductId)?.name || 'Sem vendas no período';
 
   const financialTrendStr = calculatedLucroVal > 10000 
     ? 'Alta Exponencial (+18.4% MoM)' 
@@ -607,7 +614,7 @@ export default function DashboardBI({
   const getDaysDiffForChart = (dateStr: string) => {
     if (!dateStr) return 999;
     const targetDate = dateStr.split('T')[0];
-    const todayStr = '2026-06-03';
+    const todayStr = new Date().toISOString().split('T')[0];
     const time1 = new Date(targetDate).getTime();
     const time2 = new Date(todayStr).getTime();
     return Math.floor((time2 - time1) / (1000 * 60 * 60 * 24));
@@ -797,7 +804,8 @@ export default function DashboardBI({
 
   const renderCard = (item: any) => {
     const IconComp = item.icon;
-    const pctChange = ((item.value - item.prior) / item.prior) * 100;
+    const hasPrior = Number(item.prior) > 0;
+    const pctChange = hasPrior ? ((item.value - item.prior) / item.prior) * 100 : 0;
     const isGrowth = pctChange >= 0;
     
     let isPositiveResult = isGrowth;
@@ -852,10 +860,10 @@ export default function DashboardBI({
             ) : (
               <ArrowDownRight className="h-3 w-3 mr-0.5" />
             )}
-            {Math.abs(pctChange).toFixed(1)}%
+            {hasPrior ? `${Math.abs(pctChange).toFixed(1)}%` : 'Real'}
           </span>
           <span className={isDark ? 'text-slate-500' : 'text-slate-400'}>
-            anterior ({item.format(item.prior)})
+            {hasPrior ? `anterior (${item.format(item.prior)})` : 'base Supabase'}
           </span>
         </div>
 
@@ -1938,7 +1946,7 @@ export default function DashboardBI({
           <div className="relative pl-6 space-y-6">
             <div className={`absolute left-[9px] top-2 bottom-3 w-0.5 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`} />
 
-            {(stockMovements.length > 0 ? stockMovements.slice(0, 5) : [
+            {(stockMovements.length >= 0 ? stockMovements.slice(0, 5) : [
               {
                 id: 'mv-init-1',
                 produto_nome: 'Azeite de Oliva Extra Virgem 500ml',
@@ -2118,13 +2126,13 @@ export default function DashboardBI({
                           : 'bg-white border border-slate-200 text-[#1F3767] focus:border-slate-300'
                       }`}
                     >
-                      <option value="Hoje">Hoje (2026-06-03)</option>
+                      <option value="Hoje">Hoje</option>
                       <option value="Últimos 7 dias">Últimos 7 dias</option>
                       <option value="Últimos 15 dias">Últimos 15 dias</option>
                       <option value="Últimos 30 dias">Últimos 30 dias</option>
-                      <option value="Este mês">Este mês (Junho/2026)</option>
-                      <option value="Mês anterior">Mês anterior (Maio/2026)</option>
-                      <option value="Este ano">Este ano (2026)</option>
+                      <option value="Este mês">Este mês</option>
+                      <option value="Mês anterior">Mês anterior</option>
+                      <option value="Este ano">Este ano</option>
                       <option value="Personalizado">Intervalo Personalizado...</option>
                       <option value="Todos">Todo o Histórico</option>
                     </select>

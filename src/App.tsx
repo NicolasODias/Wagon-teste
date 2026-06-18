@@ -488,10 +488,118 @@ export default function App() {
     }
   };
 
+  const mapDbOrderStatus = (status: string, nfEmitida?: boolean): Order['status'] => {
+    const normalized = (status || '').toUpperCase();
+    if (normalized === 'CANCELADO') return 'Cancelado';
+    if (normalized === 'EM_SEPARACAO') return 'Em Separação';
+    if (normalized === 'ROTA_ENTREGA') return 'Rota de Entrega';
+    if (normalized === 'ENTREGUE' || normalized === 'FINALIZADO') return 'Entregue';
+    return nfEmitida ? 'Entregue' : 'Aguardando Faturamento';
+  };
+
+  const fetchOrdersFromSupabase = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const [
+        { data: orderData, error: orderErr },
+        { data: itemData, error: itemErr },
+        { data: clientData, error: clientErr },
+        { data: productData, error: productErr },
+        { data: userData, error: userErr }
+      ] = await Promise.all([
+        supabase.from('pedidos').select('*').order('created_at', { ascending: false }),
+        supabase.from('pedido_itens').select('*'),
+        supabase.from('clientes').select('id, nome_negocio, vendedor_id'),
+        supabase.from('produtos').select('id, nome, valor_compra, valor_venda'),
+        supabase.from('users').select('auth_id, nome')
+      ]);
+
+      if (orderErr) throw orderErr;
+      if (itemErr) throw itemErr;
+      if (clientErr) throw clientErr;
+      if (productErr) throw productErr;
+      if (userErr) throw userErr;
+
+      const clientMap = new Map<string, any>();
+      (clientData || []).forEach((row: any) => clientMap.set(row.id, row));
+
+      const productMap = new Map<string, any>();
+      (productData || []).forEach((row: any) => productMap.set(row.id, row));
+
+      const userMap = new Map<string, string>();
+      (userData || []).forEach((row: any) => {
+        if (row.auth_id) userMap.set(row.auth_id, row.nome);
+      });
+
+      const itemsByOrder = new Map<string, any[]>();
+      (itemData || []).forEach((row: any) => {
+        const list = itemsByOrder.get(row.pedido_id) || [];
+        list.push(row);
+        itemsByOrder.set(row.pedido_id, list);
+      });
+
+      const mappedOrders: Order[] = (orderData || []).map((row: any) => {
+        const dbItems = itemsByOrder.get(row.id) || [];
+        const mappedItems = dbItems.map((item: any) => {
+          const product = productMap.get(item.produto_id);
+          const quantity = Number(item.quantidade) || 0;
+          const unitPrice = Number(item.valor_unitario) || Number(product?.valor_venda) || 0;
+          return {
+            id: `${row.id}-${item.produto_id}`,
+            productId: item.produto_id,
+            productName: product?.nome || 'Produto removido',
+            quantity,
+            unitPrice,
+            total: quantity * unitPrice
+          };
+        });
+
+        const subtotal = mappedItems.reduce((sum, item) => sum + item.total, 0);
+        const total = Number(row.valor_total) || subtotal;
+        const icms = total * 0.18;
+        const ipi = total * 0.05;
+        const pisCofins = total * 0.0365;
+        const taxesTotal = icms + ipi + pisCofins;
+        const cogs = mappedItems.reduce((sum, item) => {
+          const product = productMap.get(item.productId);
+          return sum + ((Number(product?.valor_compra) || 0) * item.quantity);
+        }, 0);
+        const marginPercent = total > 0 ? ((total - cogs - taxesTotal) / total) * 100 : 0;
+        const client = clientMap.get(row.cliente_id);
+        const sellerName = row.vendedor_id ? userMap.get(row.vendedor_id) : undefined;
+
+        return {
+          id: row.id,
+          clientId: row.cliente_id || '',
+          clientName: client?.nome_negocio || 'Cliente removido',
+          date: row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+          items: mappedItems,
+          subtotal,
+          taxes: {
+            icms,
+            ipi,
+            pisCofins,
+            total: taxesTotal
+          },
+          total,
+          marginPercent,
+          status: mapDbOrderStatus(row.status, row.nf_emitida),
+          paymentTerm: '30 Dias',
+          salesRep: sellerName || (client?.vendedor_id ? userMap.get(client.vendedor_id) : undefined)
+        };
+      });
+
+      setOrders(mappedOrders);
+    } catch (err) {
+      console.error('[Supabase Fetch Orders Error]', err);
+    }
+  };
+
   useEffect(() => {
     if (isSupabaseConfigured && currentUser) {
       fetchClientsFromSupabase();
       fetchProductsFromSupabase();
+      fetchOrdersFromSupabase();
       fetchStockMovementsFromSupabase();
       fetchFinancialRecordsFromSupabase();
       fetchCommissionsFromSupabase();
