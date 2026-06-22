@@ -6,6 +6,7 @@
 import express from 'express';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
+import { createClient as createSupabaseClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 
@@ -110,6 +111,74 @@ const USERS_DB = [
 ];
 
 const FORGOT_PASSWORD_TOKENS = new Map<string, { email: string, expires: number }>();
+
+// ==========================================
+// SUPABASE ADMIN CLIENT (backend only)
+// Usa a service_role key — JAMAIS exposta ao frontend
+// ==========================================
+
+const SUPABASE_ADMIN_URL = process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+const isSupabaseAdminReady =
+  SUPABASE_ADMIN_URL &&
+  SUPABASE_SERVICE_ROLE_KEY &&
+  !SUPABASE_ADMIN_URL.includes('placeholder') &&
+  SUPABASE_SERVICE_ROLE_KEY.length > 20;
+
+let supabaseAdmin: SupabaseClient | null = null;
+
+if (isSupabaseAdminReady) {
+  supabaseAdmin = createSupabaseClient(SUPABASE_ADMIN_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+  console.log('[Wagon AI Admin] Supabase Admin client (service_role) iniciado com sucesso.');
+} else {
+  console.log('[Wagon AI Admin] Supabase Admin não configurado. Gerenciamento de colaboradores em modo local.');
+}
+
+// Admin Middleware — suporta JWT local (modo offline) e Supabase JWT (modo produção)
+async function requireAdmin(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Não autorizado. Token ausente.' });
+  }
+  const token = authHeader.substring(7);
+
+  // Tenta verificar como JWT local primeiro
+  const localDecoded = verifyJwt(token);
+  if (localDecoded && localDecoded.role === 'ADMIN') {
+    req.adminUser = localDecoded;
+    return next();
+  }
+
+  // Tenta verificar como Supabase Access Token
+  if (supabaseAdmin) {
+    try {
+      const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+      if (error || !user) {
+        return res.status(401).json({ error: 'Token inválido ou sessão expirada.' });
+      }
+      // Verifica se é ADMIN na tabela public.users
+      const { data: profile, error: profileErr } = await supabaseAdmin
+        .from('users')
+        .select('perfil, nome')
+        .eq('auth_id', user.id)
+        .maybeSingle();
+
+      if (profileErr || !profile || profile.perfil !== 'ADMIN') {
+        return res.status(403).json({ error: 'Acesso restrito a administradores.' });
+      }
+      req.adminUser = { id: user.id, email: user.email, role: 'ADMIN', name: profile.nome };
+      return next();
+    } catch (err) {
+      console.error('[requireAdmin] Erro de autenticação:', err);
+      return res.status(401).json({ error: 'Falha na autenticação.' });
+    }
+  }
+
+  return res.status(401).json({ error: 'Sistema de autenticação não configurado para admin.' });
+}
 
 // Authentication Endpoints
 
@@ -271,6 +340,193 @@ app.post('/api/auth/reset-password', (req, res) => {
     success: true,
     message: 'Senha alterada com sucesso! Você já pode realizar o login.'
   });
+});
+
+// ==========================================
+// ADMIN: GERENCIAMENTO DE COLABORADORES
+// ==========================================
+
+// GET /api/admin/users — Lista todos os colaboradores cadastrados
+app.get('/api/admin/users', requireAdmin, async (req: any, res) => {
+  if (supabaseAdmin) {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('id, auth_id, nome, email, perfil, telefone, ativo, created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[Admin GET /users] Erro:', error);
+      return res.status(500).json({ error: error.message });
+    }
+    return res.json({ success: true, users: data || [] });
+  }
+
+  // Modo local
+  return res.json({
+    success: true,
+    users: USERS_DB.map(u => ({
+      id: u.id,
+      auth_id: u.id,
+      nome: u.name,
+      email: u.email,
+      perfil: u.role,
+      telefone: '',
+      ativo: true,
+      created_at: new Date().toISOString()
+    }))
+  });
+});
+
+// POST /api/admin/create-user — Cria um novo colaborador
+app.post('/api/admin/create-user', requireAdmin, async (req: any, res) => {
+  const { nome, email, password, perfil, telefone, comissao_rate, meta_vendas } = req.body;
+
+  if (!nome || !email || !password || !perfil) {
+    return res.status(400).json({ error: 'Nome, e-mail, senha e perfil são obrigatórios.' });
+  }
+
+  if (!['ADMIN', 'VENDEDOR'].includes(perfil)) {
+    return res.status(400).json({ error: 'Perfil inválido. Use ADMIN ou VENDEDOR.' });
+  }
+
+  const sanitizedEmail = email.toLowerCase().trim();
+
+  if (supabaseAdmin) {
+    // Verifica duplicidade de email
+    const { data: existing } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', sanitizedEmail)
+      .maybeSingle();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Já existe um colaborador cadastrado com este e-mail.' });
+    }
+
+    // Cria usuário via Admin API (confirma e-mail automaticamente, sem necessidade de link)
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email: sanitizedEmail,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        fullname: nome,
+        role: perfil,
+        phone: telefone || ''
+      }
+    });
+
+    if (authError) {
+      console.error('[Admin Create User] Erro no auth.admin.createUser:', authError);
+      return res.status(400).json({ error: authError.message });
+    }
+
+    // Garante registro na tabela public.users (trigger já faz isso, mas faz upsert por segurança)
+    if (authData?.user) {
+      const upsertData: Record<string, any> = {
+        auth_id: authData.user.id,
+        nome,
+        email: sanitizedEmail,
+        perfil,
+        telefone: telefone || '',
+        ativo: true
+      };
+
+      // Campos exclusivos para VENDEDOREs
+      if (perfil === 'VENDEDOR') {
+        upsertData.comissao_rate = Number(comissao_rate) > 0 ? Number(comissao_rate) : 5.0;
+        upsertData.meta_vendas = Number(meta_vendas) > 0 ? Number(meta_vendas) : 100000;
+      }
+
+      const { error: profileError } = await supabaseAdmin.from('users').upsert(upsertData, { onConflict: 'email' });
+
+      if (profileError) {
+        console.warn('[Admin Create User] Aviso ao fazer upsert em public.users:', profileError.message);
+      }
+    }
+
+    console.log(`[Admin] ✅ Colaborador criado: ${sanitizedEmail} (${perfil}) por ${req.adminUser?.email}`);
+    return res.json({ success: true, message: `Colaborador ${nome} criado com sucesso!` });
+  }
+
+  // Modo local
+  const alreadyExists = USERS_DB.find(u => u.email.toLowerCase() === sanitizedEmail);
+  if (alreadyExists) {
+    return res.status(400).json({ error: 'Já existe um colaborador com este e-mail.' });
+  }
+
+  const newLocalUser: any = {
+    id: `usr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    name: nome,
+    email: sanitizedEmail,
+    passwordHash: hashPassword(password),
+    role: perfil,
+    permissions: perfil === 'ADMIN'
+      ? ["Acesso total", "Financeiro", "Estoque", "Pedidos", "Clientes", "Vendedores", "AI Center", "Configurações"]
+      : ["Dashboard Vendedor", "Clientes", "Nova Venda", "Histórico de Vendas", "Comissão"]
+  };
+  USERS_DB.push(newLocalUser);
+
+  console.log(`[Admin] ✅ Colaborador criado localmente: ${sanitizedEmail} (${perfil})`);
+  return res.json({ success: true, message: `Colaborador ${nome} criado com sucesso (modo local)!` });
+});
+
+// PATCH /api/admin/users/:id — Atualiza dados do colaborador
+app.patch('/api/admin/users/:id', requireAdmin, async (req: any, res) => {
+  const { id } = req.params;
+  const { nome, perfil, telefone, ativo, comissao_rate, meta_vendas } = req.body;
+
+  if (supabaseAdmin) {
+    const updatePayload: Record<string, any> = {};
+    if (nome !== undefined) updatePayload.nome = nome;
+    if (perfil !== undefined && ['ADMIN', 'VENDEDOR'].includes(perfil)) updatePayload.perfil = perfil;
+    if (telefone !== undefined) updatePayload.telefone = telefone;
+    if (ativo !== undefined) updatePayload.ativo = ativo;
+    if (comissao_rate !== undefined) updatePayload.comissao_rate = Number(comissao_rate);
+    if (meta_vendas !== undefined) updatePayload.meta_vendas = Number(meta_vendas);
+
+    const { error } = await supabaseAdmin
+      .from('users')
+      .update(updatePayload)
+      .eq('id', id);
+
+    if (error) {
+      console.error('[Admin PATCH /users/:id] Erro:', error);
+      return res.status(500).json({ error: error.message });
+    }
+    return res.json({ success: true, message: 'Colaborador atualizado com sucesso.' });
+  }
+
+  // Modo local
+  const user = USERS_DB.find(u => u.id === id);
+  if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  if (nome) user.name = nome;
+  if (perfil && ['ADMIN', 'VENDEDOR'].includes(perfil)) user.role = perfil;
+
+  return res.json({ success: true, message: 'Colaborador atualizado com sucesso.' });
+});
+
+// DELETE /api/admin/users/:id — Desativa (soft delete) o colaborador
+app.delete('/api/admin/users/:id', requireAdmin, async (req: any, res) => {
+  const { id } = req.params;
+
+  if (supabaseAdmin) {
+    // Soft delete: mantém o registro mas marca como inativo
+    const { error } = await supabaseAdmin
+      .from('users')
+      .update({ ativo: false })
+      .eq('id', id);
+
+    if (error) {
+      console.error('[Admin DELETE /users/:id] Erro:', error);
+      return res.status(500).json({ error: error.message });
+    }
+    return res.json({ success: true, message: 'Colaborador desativado com sucesso.' });
+  }
+
+  // Modo local
+  const index = USERS_DB.findIndex(u => u.id === id);
+  if (index !== -1) USERS_DB.splice(index, 1);
+  return res.json({ success: true, message: 'Colaborador removido com sucesso.' });
 });
 
 // Initialize Gemini SDK with telemetry header
