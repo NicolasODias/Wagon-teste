@@ -43,17 +43,8 @@ create policy "VENDEDOR - Acesso aos Próprios Dados"
     auth_id = auth.uid()
   );
 
-create policy "VENDEDOR - Atualização dos Próprios Dados"
-  on public.users
-  as permissive
-  for update
-  to authenticated
-  using (
-    auth_id = auth.uid()
-  )
-  with check (
-    auth_id = auth.uid()
-  );
+-- Vendedores não atualizam public.users diretamente.
+-- Alterações de perfil, status e dados funcionais passam pelo endpoint administrativo.
 
 -- 4. Função dinâmica de trigger para sincronização do auth.users com a tabela de usuários
 create or replace function public.handle_new_user()
@@ -70,14 +61,9 @@ begin
     split_part(new.email, '@', 1)
   );
   
-  -- Definir o papel padrão com base no email ou metadados
-  user_role := coalesce(
-    new.raw_user_meta_data->>'role',
-    case 
-      when new.email ilike '%adm%' or new.email ilike '%admin%' then 'ADMIN'
-      else 'VENDEDOR'
-    end
-  );
+  -- Novos usuários sempre começam como vendedor.
+  -- Promoções para ADMIN só podem ser feitas pelo backend administrativo.
+  user_role := 'VENDEDOR';
 
   user_phone := coalesce(new.raw_user_meta_data->>'phone', '');
 
@@ -88,12 +74,12 @@ begin
     new.email,
     user_role,
     user_phone,
-    true
+    false
   )
   on conflict (email) do update 
   set auth_id = excluded.auth_id,
       nome = excluded.nome,
-      perfil = excluded.perfil;
+      telefone = excluded.telefone;
 
   return new;
 end;

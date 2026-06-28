@@ -16,14 +16,19 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
 // ==========================================
 // SECURITY & SESSION ENGINE (WAGON AI)
 // ==========================================
 
-const JWT_SECRET = process.env.JWT_SECRET || 'wagon-ai-premium-token-key-2026';
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+const ALLOW_LOCAL_AUTH = process.env.ALLOW_LOCAL_AUTH === 'true' && process.env.NODE_ENV !== 'production';
+
+if (!process.env.JWT_SECRET && ALLOW_LOCAL_AUTH) {
+  console.warn('[Security] JWT_SECRET ausente; sessões locais serão invalidadas ao reiniciar.');
+}
 
 function base64UrlEncode(str: string): string {
   return Buffer.from(str)
@@ -72,43 +77,46 @@ function verifyJwt(token: string): any | null {
 }
 
 function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password).digest('hex');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return salt + ':' + hash;
+}
+
+function verifyPassword(password: string, storedHash: string): boolean {
+  const [salt, expectedHex] = storedHash.split(':');
+  if (!salt || !expectedHex) return false;
+  const actual = crypto.scryptSync(password, salt, 64);
+  const expected = Buffer.from(expectedHex, 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
 // In-Memory Secure Hashed Database (No rawtext passwords, dynamic startup hashing to prevent mismatched constants)
-const USERS_DB = [
-  {
-    id: "usr-admin-01",
-    name: "Edilson Administrador",
-    email: "edilson.adm@wagon.com",
-    passwordHash: hashPassword("Edilson#ADM@@"), // Calculated dynamically to ensure 100% exact match consistency
-    role: "ADMIN",
+type LocalUser = {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  role: 'ADMIN' | 'VENDEDOR';
+  permissions: string[];
+};
+
+const USERS_DB: LocalUser[] = [];
+
+if (ALLOW_LOCAL_AUTH && process.env.LOCAL_ADMIN_EMAIL && process.env.LOCAL_ADMIN_PASSWORD) {
+  USERS_DB.push({
+    id: 'usr-local-admin',
+    name: process.env.LOCAL_ADMIN_NAME || 'Administrador Local',
+    email: process.env.LOCAL_ADMIN_EMAIL.toLowerCase().trim(),
+    passwordHash: hashPassword(process.env.LOCAL_ADMIN_PASSWORD),
+    role: 'ADMIN',
     permissions: [
-      "Acesso total",
-      "Financeiro",
-      "Estoque",
-      "Pedidos",
-      "Clientes",
-      "Vendedores",
-      "AI Center",
-      "Configurações"
+      "Acesso total", "Financeiro", "Estoque", "Pedidos", "Clientes",
+      "Vendedores", "AI Center", "Configurações"
     ]
-  },
-  {
-    id: "usr-seller-01",
-    name: "Vendedor 01",
-    email: "vendedor1@wagon.com",
-    passwordHash: hashPassword("12345678@vendedor"), // Calculated dynamically to ensure 100% exact match consistency
-    role: "VENDEDOR",
-    permissions: [
-      "Dashboard Vendedor",
-      "Clientes",
-      "Nova Venda",
-      "Histórico de Vendas",
-      "Comissão"
-    ]
-  }
-];
+  });
+} else if (ALLOW_LOCAL_AUTH) {
+  console.warn('[Security] Defina LOCAL_ADMIN_EMAIL e LOCAL_ADMIN_PASSWORD para usar autenticação local.');
+}
 
 const FORGOT_PASSWORD_TOKENS = new Map<string, { email: string, expires: number }>();
 
@@ -119,6 +127,7 @@ const FORGOT_PASSWORD_TOKENS = new Map<string, { email: string, expires: number 
 
 const SUPABASE_ADMIN_URL = process.env.VITE_SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
 
 const isSupabaseAdminReady =
   SUPABASE_ADMIN_URL &&
@@ -127,6 +136,13 @@ const isSupabaseAdminReady =
   SUPABASE_SERVICE_ROLE_KEY.length > 20;
 
 let supabaseAdmin: SupabaseClient | null = null;
+let supabaseAuthVerifier: SupabaseClient | null = null;
+
+if (SUPABASE_ADMIN_URL && SUPABASE_ANON_KEY) {
+  supabaseAuthVerifier = createSupabaseClient(SUPABASE_ADMIN_URL, SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+}
 
 if (isSupabaseAdminReady) {
   supabaseAdmin = createSupabaseClient(SUPABASE_ADMIN_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -134,7 +150,7 @@ if (isSupabaseAdminReady) {
   });
   console.log('[Wagon AI Admin] Supabase Admin client (service_role) iniciado com sucesso.');
 } else {
-  console.log('[Wagon AI Admin] Supabase Admin não configurado. Gerenciamento de colaboradores em modo local.');
+  console.warn('[Wagon AI Admin] Supabase Admin não configurado. Rotas administrativas ficarão indisponíveis.');
 }
 
 // Admin Middleware — suporta JWT local (modo offline) e Supabase JWT (modo produção)
@@ -147,7 +163,7 @@ async function requireAdmin(req: any, res: any, next: any) {
 
   // Tenta verificar como JWT local primeiro
   const localDecoded = verifyJwt(token);
-  if (localDecoded && localDecoded.role === 'ADMIN') {
+  if (ALLOW_LOCAL_AUTH && localDecoded && localDecoded.role === 'ADMIN') {
     req.adminUser = localDecoded;
     return next();
   }
@@ -155,7 +171,7 @@ async function requireAdmin(req: any, res: any, next: any) {
   // Tenta verificar como Supabase Access Token
   if (supabaseAdmin) {
     try {
-      const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+      const { user, error } = await getVerifiedSupabaseUser(token);
       if (error || !user) {
         return res.status(401).json({ error: 'Token inválido ou sessão expirada.' });
       }
@@ -180,9 +196,189 @@ async function requireAdmin(req: any, res: any, next: any) {
   return res.status(401).json({ error: 'Sistema de autenticação não configurado para admin.' });
 }
 
+
+async function requireAuthenticated(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Não autorizado. Token ausente.' });
+  }
+
+  const token = authHeader.substring(7);
+  const localDecoded = ALLOW_LOCAL_AUTH ? verifyJwt(token) : null;
+  if (localDecoded && USERS_DB.some(user => user.id === localDecoded.id)) {
+    req.authUser = localDecoded;
+    return next();
+  }
+
+  if (!supabaseAdmin) {
+    return res.status(401).json({ error: 'Autenticação não configurada.' });
+  }
+
+  const { user, error } = await getVerifiedSupabaseUser(token);
+  if (error || !user) {
+    return res.status(401).json({ error: 'Token inválido ou sessão expirada.' });
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('users')
+    .select('perfil, nome')
+    .eq('auth_id', user.id)
+    .maybeSingle();
+
+  if (profileError || !profile) {
+    return res.status(403).json({ error: 'Usuário sem acesso ativo.' });
+  }
+
+  req.authUser = { id: user.id, email: user.email, role: profile.perfil, name: profile.nome };
+  return next();
+}
+
+const aiRequests = new Map<string, { count: number; resetAt: number }>();
+function limitAiRequests(req: any, res: any, next: any) {
+  const key = req.authUser?.id || req.ip;
+  const now = Date.now();
+  const current = aiRequests.get(key);
+  if (!current || current.resetAt <= now) {
+    aiRequests.set(key, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  if (current.count >= 10) {
+    return res.status(429).json({ error: 'Limite de análises atingido. Tente novamente em instantes.' });
+  }
+  current.count += 1;
+  return next();
+}
+
+
+
+async function getVerifiedSupabaseUser(token: string): Promise<{ user: any | null; error: any | null }> {
+  if (!supabaseAdmin || !SUPABASE_ADMIN_URL || !SUPABASE_ANON_KEY) {
+    return { user: null, error: new Error('Supabase não configurado.') };
+  }
+
+  const verifier = supabaseAuthVerifier || supabaseAdmin;
+  const authResult = await verifier.auth.getUser(token);
+  if (!authResult.error && authResult.data.user) {
+    return { user: authResult.data.user, error: null };
+  }
+
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) throw new Error('Token malformado.');
+    const payload = JSON.parse(base64UrlDecode(parts[1]));
+    if (!payload.sub || !payload.email || (payload.exp && payload.exp < Date.now() / 1000)) {
+      throw new Error('Token expirado ou incompleto.');
+    }
+
+    const tokenClient = createSupabaseClient(SUPABASE_ADMIN_URL, SUPABASE_ANON_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+    const validation = await tokenClient.from('users').select('auth_id').limit(1);
+    if (validation.error && [401, 403].includes(validation.error.code as any)) {
+      throw validation.error;
+    }
+    if (validation.error && /jwt|token|signature/i.test(validation.error.message)) {
+      throw validation.error;
+    }
+
+    return {
+      user: {
+        id: payload.sub,
+        email: payload.email,
+        user_metadata: payload.user_metadata || {},
+        app_metadata: payload.app_metadata || {}
+      },
+      error: null
+    };
+  } catch (error) {
+    return { user: null, error };
+  }
+}
+
+const BOOTSTRAP_ADMIN_EMAIL = (process.env.BOOTSTRAP_ADMIN_EMAIL || 'edilson.adm@wagon.com').toLowerCase();
+
+function mapProfileToAuthUser(profile: any) {
+  const isAdmin = profile.perfil === 'ADMIN';
+  return {
+    id: profile.auth_id,
+    name: profile.nome,
+    email: profile.email,
+    role: profile.perfil,
+    telefone: profile.telefone || '',
+    permissions: isAdmin
+      ? ["Acesso total", "Financeiro", "Estoque", "Pedidos", "Clientes", "Vendedores", "AI Center", "Configurações"]
+      : ["Dashboard Vendedor", "Clientes", "Nova Venda", "Histórico de Vendas", "Comissão"]
+  };
+}
+
+app.get('/api/auth/profile', async (req, res) => {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Supabase Admin não configurado no servidor.' });
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Token de acesso ausente.' });
+  }
+
+  const token = authHeader.substring(7);
+  const { data: { user }, error: authError } = await (supabaseAuthVerifier || supabaseAdmin).auth.getUser(token);
+  if (authError || !user || !user.email) {
+    return res.status(401).json({ error: 'Sessão inválida ou expirada.' });
+  }
+
+  const normalizedEmail = user.email.toLowerCase();
+  let { data: profile, error: profileError } = await supabaseAdmin
+    .from('users')
+    .select('id, auth_id, nome, email, perfil')
+    .eq('auth_id', user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    return res.status(500).json({ error: profileError.message });
+  }
+
+  if (!profile && normalizedEmail === BOOTSTRAP_ADMIN_EMAIL) {
+    const adminProfile = {
+      auth_id: user.id,
+      nome: user.user_metadata?.fullname || user.user_metadata?.name || 'Administrador',
+      email: normalizedEmail,
+      perfil: 'ADMIN',
+    };
+
+    const { data: createdProfile, error: createError } = await supabaseAdmin
+      .from('users')
+      .upsert(adminProfile, { onConflict: 'email' })
+      .select('id, auth_id, nome, email, perfil')
+      .single();
+
+    if (createError) {
+      return res.status(500).json({ error: 'Não foi possível criar o perfil administrativo: ' + createError.message });
+    }
+
+    await supabaseAdmin.auth.admin.updateUserById(user.id, {
+      email_confirm: true,
+      app_metadata: { role: 'ADMIN' }
+    });
+
+    profile = createdProfile;
+  }
+
+  if (!profile) {
+    return res.status(403).json({ error: 'Conta sem perfil de colaborador. Solicite o cadastro ao administrador.' });
+  }
+
+  return res.json({ success: true, user: mapProfileToAuthUser({ ...profile, ativo: true, telefone: '' }) });
+});
+
 // Authentication Endpoints
 
 app.post('/api/auth/login', (req, res) => {
+  if (!ALLOW_LOCAL_AUTH) {
+    return res.status(503).json({ error: 'Autenticação local desativada. Configure o Supabase.' });
+  }
+
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
@@ -191,27 +387,14 @@ app.post('/api/auth/login', (req, res) => {
   // Sanitize input email strictly with lower-casing and trimming
   const sanitizedEmail = email.toLowerCase().trim();
 
-  // Debug Logging: E-mail recebido
-  console.log(`[AUTH DEBUG] E-mail recebido no login: "${email}" -> Sanitizado para: "${sanitizedEmail}"`);
-
   // Case-insensitive lookup after sanitization
   const user = USERS_DB.find(u => u.email.toLowerCase().trim() === sanitizedEmail);
   
-  // Debug Logging: Usuário encontrado
   if (!user) {
-    console.log(`[AUTH DEBUG] Usuário não encontrado no banco para o e-mail: "${sanitizedEmail}"`);
     return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
-  } else {
-    console.log(`[AUTH DEBUG] Usuário encontrado: id="${user.id}", nome="${user.name}", email="${user.email}"`);
   }
 
-  const inputHash = hashPassword(password);
-  const passwordMatch = inputHash === user.passwordHash;
-
-  // Debug Logging: Resultado da validação da senha
-  console.log(`[AUTH DEBUG] Validação de senha: Input hash="${inputHash}", Saved hash="${user.passwordHash}", Coincide: ${passwordMatch}`);
-
-  if (!passwordMatch) {
+  if (!verifyPassword(password, user.passwordHash)) {
     return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
   }
 
@@ -237,6 +420,10 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 app.get('/api/auth/me', (req, res) => {
+  if (!ALLOW_LOCAL_AUTH) {
+    return res.status(503).json({ error: 'Autenticação local desativada.' });
+  }
+
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Sessão inválida ou não autorizada.' });
@@ -266,6 +453,10 @@ app.get('/api/auth/me', (req, res) => {
 });
 
 app.post('/api/auth/forgot-password', (req, res) => {
+  if (!ALLOW_LOCAL_AUTH) {
+    return res.status(503).json({ error: 'Autenticação local desativada.' });
+  }
+
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ error: 'O e-mail é obrigatório para recuperação.' });
@@ -278,7 +469,7 @@ app.post('/api/auth/forgot-password', (req, res) => {
   }
 
   // Create a 6-digit numeric recovery code
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = crypto.randomInt(100000, 1000000).toString();
   FORGOT_PASSWORD_TOKENS.set(code, {
     email: user.email,
     expires: Date.now() + 60 * 60 * 1000 // 1 hour validity
@@ -299,12 +490,15 @@ app.post('/api/auth/forgot-password', (req, res) => {
 
   return res.json({
     success: true,
-    message: 'Código de recuperação enviado com sucesso para o seu e-mail.',
-    code // Return the code in response to facilitate seamless local simulation
+    message: 'Código de recuperação enviado com sucesso para o seu e-mail.'
   });
 });
 
 app.post('/api/auth/reset-password', (req, res) => {
+  if (!ALLOW_LOCAL_AUTH) {
+    return res.status(503).json({ error: 'Autenticação local desativada.' });
+  }
+
   const { email, token, newPassword } = req.body;
   if (!email || !token || !newPassword) {
     return res.status(400).json({ error: 'Por favor, forneça o e-mail, o código e a nova senha.' });
@@ -351,14 +545,21 @@ app.get('/api/admin/users', requireAdmin, async (req: any, res) => {
   if (supabaseAdmin) {
     const { data, error } = await supabaseAdmin
       .from('users')
-      .select('id, auth_id, nome, email, perfil, telefone, ativo, created_at')
+      .select('*')
       .order('created_at', { ascending: false });
 
     if (error) {
       console.error('[Admin GET /users] Erro:', error);
       return res.status(500).json({ error: error.message });
     }
-    return res.json({ success: true, users: data || [] });
+    const users = (data || []).map((row: any) => ({
+      ...row,
+      telefone: row.telefone || '',
+      ativo: row.ativo ?? true,
+      comissao_rate: Number(row.comissao_rate) || 5,
+      meta_vendas: Number(row.meta_vendas) || 100000
+    }));
+    return res.json({ success: true, users });
   }
 
   // Modo local
@@ -379,7 +580,7 @@ app.get('/api/admin/users', requireAdmin, async (req: any, res) => {
 
 // POST /api/admin/create-user — Cria um novo colaborador
 app.post('/api/admin/create-user', requireAdmin, async (req: any, res) => {
-  const { nome, email, password, perfil, telefone, comissao_rate, meta_vendas } = req.body;
+  const { nome, email, password, perfil, telefone, ativo, comissao_rate, meta_vendas } = req.body;
 
   if (!nome || !email || !password || !perfil) {
     return res.status(400).json({ error: 'Nome, e-mail, senha e perfil são obrigatórios.' });
@@ -389,65 +590,100 @@ app.post('/api/admin/create-user', requireAdmin, async (req: any, res) => {
     return res.status(400).json({ error: 'Perfil inválido. Use ADMIN ou VENDEDOR.' });
   }
 
+  if (typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: 'A senha deve ter pelo menos 8 caracteres.' });
+  }
+
   const sanitizedEmail = email.toLowerCase().trim();
 
   if (supabaseAdmin) {
-    // Verifica duplicidade de email
-    const { data: existing } = await supabaseAdmin
+    const { data: existing, error: existingError } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('email', sanitizedEmail)
       .maybeSingle();
 
+    if (existingError) {
+      return res.status(500).json({ error: existingError.message });
+    }
     if (existing) {
       return res.status(400).json({ error: 'Já existe um colaborador cadastrado com este e-mail.' });
     }
 
-    // Cria usuário via Admin API (confirma e-mail automaticamente, sem necessidade de link)
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: sanitizedEmail,
       password,
       email_confirm: true,
       user_metadata: {
-        fullname: nome,
-        role: perfil,
+        fullname: nome.trim(),
         phone: telefone || ''
+      },
+      app_metadata: {
+        role: perfil
       }
     });
 
-    if (authError) {
-      console.error('[Admin Create User] Erro no auth.admin.createUser:', authError);
-      return res.status(400).json({ error: authError.message });
+    if (authError || !authData.user) {
+      console.error('[Admin Create User] Erro no Supabase Auth:', authError);
+      return res.status(400).json({ error: authError?.message || 'Falha ao criar usuário.' });
     }
 
-    // Garante registro na tabela public.users (trigger já faz isso, mas faz upsert por segurança)
-    if (authData?.user) {
-      const upsertData: Record<string, any> = {
-        auth_id: authData.user.id,
-        nome,
-        email: sanitizedEmail,
-        perfil,
-        telefone: telefone || '',
-        ativo: true
-      };
+    const baseProfile = {
+      auth_id: authData.user.id,
+      nome: nome.trim(),
+      email: sanitizedEmail,
+      perfil
+    };
+    const extendedProfile = {
+      ...baseProfile,
+      telefone: telefone || '',
+      ativo: ativo !== false,
+      comissao_rate: perfil === 'VENDEDOR' ? (Number(comissao_rate) || 5.0) : 0,
+      meta_vendas: perfil === 'VENDEDOR' ? (Number(meta_vendas) || 100000) : 0
+    };
 
-      // Campos exclusivos para VENDEDOREs
-      if (perfil === 'VENDEDOR') {
-        upsertData.comissao_rate = Number(comissao_rate) > 0 ? Number(comissao_rate) : 5.0;
-        upsertData.meta_vendas = Number(meta_vendas) > 0 ? Number(meta_vendas) : 100000;
-      }
+    let profileResult = await supabaseAdmin
+      .from('users')
+      .upsert(extendedProfile, { onConflict: 'email' })
+      .select('*')
+      .single();
 
-      const { error: profileError } = await supabaseAdmin.from('users').upsert(upsertData, { onConflict: 'email' });
+    if (profileResult.error && (
+      profileResult.error.code === '42703' ||
+      profileResult.error.message.toLowerCase().includes('does not exist')
+    )) {
+      profileResult = await supabaseAdmin
+        .from('users')
+        .upsert(baseProfile, { onConflict: 'email' })
+        .select('*')
+        .single();
+    }
 
-      if (profileError) {
-        console.warn('[Admin Create User] Aviso ao fazer upsert em public.users:', profileError.message);
+    const savedProfile = profileResult.data;
+    if (profileResult.error || !savedProfile) {
+      await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+      console.error('[Admin Create User] Perfil não criado; usuário Auth revertido:', profileResult.error);
+      return res.status(500).json({ error: 'Não foi possível vincular o usuário ao perfil comercial.' });
+    }
+
+    if (ativo === false) {
+      const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(authData.user.id, {
+        ban_duration: '876000h'
+      });
+      if (banError) {
+        await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+        console.error('[Admin Create User] Falha ao bloquear usuário inativo:', banError);
+        return res.status(500).json({ error: 'Não foi possível aplicar o status inicial da conta.' });
       }
     }
 
-    console.log(`[Admin] ✅ Colaborador criado: ${sanitizedEmail} (${perfil}) por ${req.adminUser?.email}`);
-    return res.json({ success: true, message: `Colaborador ${nome} criado com sucesso!` });
+    console.log(`[Admin] Colaborador criado: ${sanitizedEmail} (${perfil}) por ${req.adminUser?.email}`);
+    return res.status(201).json({
+      success: true,
+      message: `Colaborador ${nome} criado com sucesso!`,
+      user: savedProfile
+    });
   }
-
   // Modo local
   const alreadyExists = USERS_DB.find(u => u.email.toLowerCase() === sanitizedEmail);
   if (alreadyExists) {
@@ -476,26 +712,49 @@ app.patch('/api/admin/users/:id', requireAdmin, async (req: any, res) => {
   const { nome, perfil, telefone, ativo, comissao_rate, meta_vendas } = req.body;
 
   if (supabaseAdmin) {
+    const { data: existing, error: lookupError } = await supabaseAdmin
+      .from('users')
+      .select('id, auth_id, perfil, ativo, nome, telefone, comissao_rate, meta_vendas')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (lookupError) return res.status(500).json({ error: lookupError.message });
+    if (!existing) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+    if (existing.auth_id === req.adminUser?.id && (perfil === 'VENDEDOR' || ativo === false)) {
+      return res.status(400).json({ error: 'Você não pode remover ou desativar seu próprio acesso administrativo.' });
+    }
+
     const updatePayload: Record<string, any> = {};
-    if (nome !== undefined) updatePayload.nome = nome;
+    if (nome !== undefined) updatePayload.nome = String(nome).trim();
     if (perfil !== undefined && ['ADMIN', 'VENDEDOR'].includes(perfil)) updatePayload.perfil = perfil;
     if (telefone !== undefined) updatePayload.telefone = telefone;
-    if (ativo !== undefined) updatePayload.ativo = ativo;
+    if (ativo !== undefined) updatePayload.ativo = Boolean(ativo);
     if (comissao_rate !== undefined) updatePayload.comissao_rate = Number(comissao_rate);
     if (meta_vendas !== undefined) updatePayload.meta_vendas = Number(meta_vendas);
 
-    const { error } = await supabaseAdmin
-      .from('users')
-      .update(updatePayload)
-      .eq('id', id);
+    const { error } = await supabaseAdmin.from('users').update(updatePayload).eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
 
-    if (error) {
-      console.error('[Admin PATCH /users/:id] Erro:', error);
-      return res.status(500).json({ error: error.message });
+    const nextRole = updatePayload.perfil || existing.perfil;
+    const nextName = updatePayload.nome || existing.nome;
+    const nextPhone = updatePayload.telefone ?? existing.telefone;
+    const authUpdate: Record<string, any> = {
+      user_metadata: { fullname: nextName, phone: nextPhone || '' },
+      app_metadata: { role: nextRole }
+    };
+    if (ativo !== undefined) {
+      authUpdate.ban_duration = ativo ? 'none' : '876000h';
     }
+
+    const { error: authUpdateError } = await supabaseAdmin.auth.admin.updateUserById(existing.auth_id, authUpdate);
+    if (authUpdateError) {
+      console.error('[Admin PATCH /users/:id] Falha ao sincronizar Auth:', authUpdateError);
+      return res.status(500).json({ error: 'Perfil salvo, mas o acesso no Auth não pôde ser sincronizado. Tente novamente.' });
+    }
+
     return res.json({ success: true, message: 'Colaborador atualizado com sucesso.' });
   }
-
   // Modo local
   const user = USERS_DB.find(u => u.id === id);
   if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
@@ -510,19 +769,31 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req: any, res) => {
   const { id } = req.params;
 
   if (supabaseAdmin) {
-    // Soft delete: mantém o registro mas marca como inativo
-    const { error } = await supabaseAdmin
+    const { data: existing, error: lookupError } = await supabaseAdmin
       .from('users')
-      .update({ ativo: false })
-      .eq('id', id);
+      .select('auth_id')
+      .eq('id', id)
+      .maybeSingle();
 
-    if (error) {
-      console.error('[Admin DELETE /users/:id] Erro:', error);
-      return res.status(500).json({ error: error.message });
+    if (lookupError) return res.status(500).json({ error: lookupError.message });
+    if (!existing) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    if (existing.auth_id === req.adminUser?.id) {
+      return res.status(400).json({ error: 'Você não pode desativar sua própria conta.' });
     }
-    return res.json({ success: true, message: 'Colaborador desativado com sucesso.' });
-  }
 
+    const { error } = await supabaseAdmin.from('users').update({ ativo: false }).eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(existing.auth_id, {
+      ban_duration: '876000h'
+    });
+    if (banError) {
+      console.error('[Admin DELETE /users/:id] Falha ao bloquear Auth:', banError);
+      return res.status(500).json({ error: 'Perfil desativado, mas a sessão não pôde ser bloqueada. Tente novamente.' });
+    }
+
+    return res.json({ success: true, message: 'Colaborador desativado e acesso bloqueado.' });
+  }
   // Modo local
   const index = USERS_DB.findIndex(u => u.id === id);
   if (index !== -1) USERS_DB.splice(index, 1);
@@ -607,7 +878,7 @@ Simulação offline devido à ausência de chave de API Gemini ativa no ambiente
 }
 
 // API endpoint for AI Insights
-app.post('/api/gemini/insights', async (req, res) => {
+app.post('/api/gemini/insights', requireAuthenticated, limitAiRequests, async (req, res) => {
   const { products, clients, orders, financialRecords, promptContext } = req.body;
 
   // Custom data threshold guard: If we have insufficient production data, do not fabricate generic insights
